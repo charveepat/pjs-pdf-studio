@@ -155,6 +155,25 @@
   .pagechip img{ width:100%; display:block; border-radius:3px; }
   .pagechip span{ display:block; font-size:9.5px; color:var(--ink-faint); font-family:var(--font-mono); margin-top:3px; }
   .pagechip-dot{ position:absolute; top:5px; right:5px; width:7px; height:7px; border-radius:50%; background:var(--accent); }
+  .pagechip .pagechip-check{ position:absolute; top:4px; left:4px; width:16px; height:16px; border-radius:4px; background:var(--accent); color:#fff; display:none; align-items:center; justify-content:center; }
+  .pagechip.active .pagechip-check{ display:flex; }
+  .pagechip-check svg{ width:10px; height:10px; }
+  .pagechip-rotimg{ transition:transform .15s ease; }
+  .pagechip-rotbtns{ display:flex; justify-content:center; gap:4px; margin-top:4px; }
+  .pagechip-rotbtns button{ border:1px solid var(--line); background:var(--panel); border-radius:4px; width:20px; height:20px; font-size:10px; cursor:pointer; color:var(--ink-soft); line-height:1; }
+  .pagechip-rotbtns button:hover{ border-color:var(--accent); color:var(--accent); }
+
+  .pickerbar{ display:flex; align-items:center; gap:8px; margin-bottom:10px; flex-wrap:wrap; }
+  .pickerbar .hint{ font-size:11.5px; color:var(--ink-faint); }
+
+  .wm-preview{ position:relative; display:inline-block; border:1px solid var(--line); border-radius:6px; overflow:hidden; margin-top:6px; max-width:100%; }
+  .wm-preview img{ display:block; max-width:100%; }
+  .wm-preview-text{ position:absolute; top:50%; left:50%; transform:translate(-50%,-50%) rotate(-45deg); white-space:nowrap; color:#808080; pointer-events:none; user-select:none; font-family:Arial,sans-serif; }
+
+  .sliderrow{ display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+  .sliderrow label{ width:78px; flex:none; font-size:12px; color:var(--ink-soft); }
+  .sliderrow input[type=range]{ flex:1; accent-color:var(--accent); }
+  .sliderrow .val{ width:44px; flex:none; text-align:right; font-family:var(--font-mono); font-size:11.5px; color:var(--ink-soft); }
 
   .pageeditor{ margin-top:14px; }
   .pageeditor-stage{ position:relative; display:inline-block; border:1px solid var(--line); border-radius:6px; overflow:hidden; }
@@ -193,8 +212,6 @@
   .filelist .row .nm{ flex:1; font-weight:600; }
   .filelist .row button{ border:0; background:none; color:var(--ink-faint); cursor:pointer; font-size:11px; }
   .filelist .row button:hover{ color:var(--accent); }
-  .addmore{ border:1px dashed var(--line); background:none; color:var(--ink-soft); border-radius:7px; padding:8px; font-size:12px; cursor:pointer; width:100%; margin-bottom:14px; }
-  .addmore:hover{ border-color:var(--accent); color:var(--accent); }
 
   .statusbar{ flex:none; display:flex; align-items:center; gap:16px; padding:7px 16px; border-top:1px solid var(--line); background:var(--cabinet); font-family:var(--font-mono); font-size:10.5px; color:var(--ink-faint); }
   .statusbar .dot{ width:6px;height:6px;border-radius:50%; background:var(--good); box-shadow:0 0 0 3px color-mix(in srgb, var(--good) 22%, transparent); }
@@ -380,6 +397,9 @@
     if(t.kind==='password') return 'Protect & Save As…';
     if(t.kind==='merge') return 'Merge & Save As…';
     if(t.kind==='split') return 'Split & Choose Folder…';
+    if(t.kind==='rotate') return 'Rotate & Save As…';
+    if(t.kind==='remove') return 'Remove Pages & Save As…';
+    if(t.kind==='watermark') return 'Add Watermark & Save As…';
     if(t.kind==='pdf-to-images') return 'Convert & Choose Folder…';
     if(t.kind==='office-to-pdf' || t.kind==='images-to-pdf') return 'Convert to PDF…';
     return 'Convert & Save As…';
@@ -484,7 +504,7 @@
       setupSingleFile([]);
 
       goBtn.addEventListener('click', function(){
-        if(!file) return;
+        if(!file){ showError('Choose a file first.'); return; }
         api().pick_save_path(baseName(file.name) + '.' + t.out).then(function(savePath){
           if(!savePath) return;
           runGuarded(function(){
@@ -503,7 +523,7 @@
       body.innerHTML = '<div id="wfFileSlot"></div>';
       setupSingleFile([]);
       goBtn.addEventListener('click', function(){
-        if(!file) return;
+        if(!file){ showError('Choose a file first.'); return; }
         api().pick_save_path(baseName(file.name) + '.xlsx').then(function(savePath){
           if(!savePath) return;
           runGuarded(function(){
@@ -522,7 +542,7 @@
       body.innerHTML = '<div id="wfFileSlot"></div>';
       setupSingleFile([]);
       goBtn.addEventListener('click', function(){
-        if(!file) return;
+        if(!file){ showError('Choose a file first.'); return; }
         api().pick_save_dir().then(function(dir){
           if(!dir) return;
           runGuarded(function(){
@@ -557,8 +577,8 @@
         var rows = files.map(function(f, i){
           return '<div class="row"><span class="n">'+(i+1)+'</span><span class="nm">'+f.name+'</span><span class="fsize">'+fmtBytes(f.size)+'</span><button data-i="'+i+'">Remove</button></div>';
         }).join('');
-        body.innerHTML = (files.length ? '<div class="filelist">'+rows+'</div>' : '')
-          + '<button class="addmore" id="wfAdd">'+(files.length ? '+ Add more files' : (t.kind==='merge' ? 'Choose PDFs to merge' : 'Choose images'))+'</button>';
+        var dzLabel = files.length ? 'Drop more files, or click to browse' : (t.kind==='merge' ? 'Drop PDFs here, or click to choose' : 'Drop images here, or click to choose');
+        body.innerHTML = (files.length ? '<div class="filelist">'+rows+'</div>' : '') + dropzoneHtml(t, dzLabel);
         body.querySelectorAll('.filelist button').forEach(function(btn){
           btn.addEventListener('click', function(){
             files.splice(parseInt(btn.getAttribute('data-i'),10), 1);
@@ -566,104 +586,188 @@
             renderFileList();
           });
         });
-        byId('wfAdd').addEventListener('click', function(){
-          api().pick_open_files(t.accept).then(function(picked){
-            files = files.concat(picked);
-            goBtn.disabled = files.length < (t.kind==='merge' ? 2 : 1);
-            renderFileList();
-          });
+        wireMultiFileDrop(byId('wfDrop'), t.accept, function(picked){
+          files = files.concat(picked);
+          goBtn.disabled = files.length < (t.kind==='merge' ? 2 : 1);
+          renderFileList();
         });
       }
       return;
     }
 
-    // ---- rotate ----
+    // ---- rotate (whole-document presets, or each page on its own) ----
     if(t.kind === 'rotate'){
+      var rotations = {};   // pageNum -> current degrees (0/90/180/270)
+      var pageCount = 0;
+
       body.innerHTML = '<div id="wfFileSlot"></div><div class="panel-box" style="display:none" id="rotBox"><h4>Rotate</h4>'
-        + '<div class="segmented" id="rotSeg">'
-        + '<div class="seg active" data-deg="90"><div class="t1">90°</div></div>'
-        + '<div class="seg" data-deg="180"><div class="t1">180°</div></div>'
-        + '<div class="seg" data-deg="270"><div class="t1">270°</div></div>'
-        + '</div></div>';
-      var degrees = 90;
-      byId('rotSeg').querySelectorAll('.seg').forEach(function(seg){
-        seg.addEventListener('click', function(){
-          byId('rotSeg').querySelectorAll('.seg').forEach(function(s){ s.classList.remove('active'); });
-          seg.classList.add('active');
-          degrees = parseInt(seg.getAttribute('data-deg'),10);
-        });
-      });
-      setupSingleFile(['rotBox']);
-      goBtn.addEventListener('click', function(){
-        if(!file) return;
-        api().pick_save_path(baseName(file.name) + '-rotated.pdf').then(function(savePath){
-          if(!savePath) return;
-          runGuarded(function(){
-            return api().rotate(file.path, degrees, savePath).then(function(){ showSuccess(successBlock(savePath)); });
-          });
-        });
-      });
-      return;
-    }
+        + '<div class="pickerbar"><span class="hint">Rotate every page:</span>'
+        + '<button class="btn btn-ghost" type="button" id="rotAllLeft">&#8634; 90&deg;</button>'
+        + '<button class="btn btn-ghost" type="button" id="rotAllRight">&#8635; 90&deg;</button>'
+        + '<button class="btn btn-ghost" type="button" id="rotAll180">180&deg;</button>'
+        + '</div>'
+        + '<div class="hint" style="margin-bottom:10px">Or use the &#8634;/&#8635; buttons on any page below to rotate just that one.</div>'
+        + '<div class="pagestrip" id="rotStrip"></div></div>';
 
-    // ---- remove pages ----
-    if(t.kind === 'remove'){
-      body.innerHTML = '<div id="wfFileSlot"></div><div class="panel-box" style="display:none" id="remBox"><h4>Pages to remove</h4>'
-        + '<div class="field"><input type="text" id="remInput" placeholder="e.g. 2, 4, 7"><div class="hint">Comma-separated page numbers.</div></div></div>';
-      setupSingleFile(['remBox']);
-      goBtn.addEventListener('click', function(){
-        if(!file) return;
-        var nums = (byId('remInput').value.match(/\d+/g) || []).map(Number);
-        if(!nums.length){ showError('Enter at least one page number.'); return; }
-        api().pick_save_path(baseName(file.name) + '-edited.pdf').then(function(savePath){
-          if(!savePath) return;
-          runGuarded(function(){
-            return api().remove_pages(file.path, nums, savePath).then(function(){ showSuccess(successBlock(savePath)); });
-          });
-        });
-      });
-      return;
-    }
+      function applyDelta(pageNum, delta){
+        var cur = rotations[pageNum] || 0;
+        rotations[pageNum] = ((cur + delta) % 360 + 360) % 360;
+        var img = byId('rotStrip').querySelector('.pagechip[data-page="'+pageNum+'"] img');
+        if(img) img.style.transform = 'rotate(' + rotations[pageNum] + 'deg)';
+      }
+      function applyAllDelta(delta){
+        for(var p = 1; p <= pageCount; p++) applyDelta(p, delta);
+      }
+      byId('rotAllLeft').addEventListener('click', function(){ applyAllDelta(-90); });
+      byId('rotAllRight').addEventListener('click', function(){ applyAllDelta(90); });
+      byId('rotAll180').addEventListener('click', function(){ applyAllDelta(180); });
 
-    // ---- split ----
-    if(t.kind === 'split'){
-      body.innerHTML = '<div id="wfFileSlot"></div><div class="panel-box" style="display:none" id="splitBox"><h4>Split mode</h4>'
-        + '<label class="checkrow"><input type="radio" name="splitmode" value="each" checked> One file per page</label>'
-        + '<label class="checkrow"><input type="radio" name="splitmode" value="range"> Extract a page range</label>'
-        + '<div class="field" id="rangeField" style="display:none"><input type="text" id="rangeInput" placeholder="e.g. 1-3, 5"></div></div>';
-      setupSingleFile(['splitBox']);
-      body.addEventListener('change', function(e){
-        if(e.target.name === 'splitmode'){
-          byId('rangeField').style.display = e.target.value === 'range' ? '' : 'none';
-        }
-      });
-      goBtn.addEventListener('click', function(){
-        if(!file) return;
-        var mode = body.querySelector('input[name=splitmode]:checked').value;
-        var ranges = null;
-        if(mode === 'range'){
-          ranges = parseRanges(byId('rangeInput').value);
-          if(!ranges.length){ showError('Enter a valid page range, e.g. 1-3, 5.'); return; }
-        }
-        api().pick_save_dir().then(function(dir){
-          if(!dir) return;
-          runGuarded(function(){
-            return api().split(file.path, dir, ranges).then(function(res){
-              showSuccess(successBlock(dir, res.outputs.length + ' files'));
+      setupSingleFile(['rotBox'], function(){
+        rotations = {};
+        api().page_count(file.path).then(function(n){
+          pageCount = n;
+          renderPageThumbs(byId('rotStrip'), file.path, n, function(pageNum, img, chip){
+            img.style.transform = 'rotate(' + (rotations[pageNum] || 0) + 'deg)';
+            var btnRow = document.createElement('div');
+            btnRow.className = 'pagechip-rotbtns';
+            btnRow.innerHTML = '<button type="button" data-d="-90" title="Rotate left">&#8634;</button><button type="button" data-d="90" title="Rotate right">&#8635;</button>';
+            chip.appendChild(btnRow);
+            btnRow.querySelectorAll('button').forEach(function(b){
+              b.addEventListener('click', function(e){
+                e.stopPropagation();
+                applyDelta(pageNum, parseInt(b.getAttribute('data-d'), 10));
+              });
             });
           });
         });
       });
-      function parseRanges(str){
-        var out = [];
-        (str||'').split(',').forEach(function(part){
-          part = part.trim();
-          var m = part.match(/^(\d+)\s*-\s*(\d+)$/);
-          if(m) out.push([parseInt(m[1],10), parseInt(m[2],10)]);
-          else if(/^\d+$/.test(part)) out.push([parseInt(part,10), parseInt(part,10)]);
+
+      goBtn.addEventListener('click', function(){
+        if(!file){ showError('Choose a file first.'); return; }
+        var toApply = {};
+        Object.keys(rotations).forEach(function(p){ if(rotations[p] % 360 !== 0) toApply[p] = rotations[p]; });
+        if(!Object.keys(toApply).length){ showError('Rotate at least one page first.'); return; }
+        api().pick_save_path(baseName(file.name) + '-rotated.pdf').then(function(savePath){
+          if(!savePath) return;
+          runGuarded(function(){
+            return api().rotate(file.path, savePath, toApply).then(function(){ showSuccess(successBlock(savePath)); });
+          });
         });
-        return out;
+      });
+      return;
+    }
+
+    // ---- remove pages (tick thumbnails, or type page numbers — kept in sync) ----
+    if(t.kind === 'remove'){
+      var toRemove = new Set();
+
+      body.innerHTML = '<div id="wfFileSlot"></div><div class="panel-box" style="display:none" id="remBox"><h4>Pages to remove</h4>'
+        + '<div class="field"><input type="text" id="remInput" placeholder="e.g. 2, 4, 7"><div class="hint">Type page numbers, or click their thumbnails below to tick them.</div></div>'
+        + '<div class="pagestrip" id="remStrip" style="margin-top:10px"></div></div>';
+
+      function refreshRemChips(){
+        byId('remStrip').querySelectorAll('.pagechip').forEach(function(chip){
+          chip.classList.toggle('active', toRemove.has(parseInt(chip.dataset.page, 10)));
+        });
       }
+      byId('remInput').addEventListener('input', function(){
+        toRemove = new Set((byId('remInput').value.match(/\d+/g) || []).map(Number));
+        refreshRemChips();
+      });
+
+      setupSingleFile(['remBox'], function(){
+        toRemove = new Set();
+        byId('remInput').value = '';
+        api().page_count(file.path).then(function(n){
+          renderPageThumbs(byId('remStrip'), file.path, n);
+          byId('remStrip').querySelectorAll('.pagechip').forEach(function(chip){
+            chip.addEventListener('click', function(){
+              var p = parseInt(chip.dataset.page, 10);
+              if(toRemove.has(p)) toRemove.delete(p); else toRemove.add(p);
+              chip.classList.toggle('active');
+              byId('remInput').value = Array.from(toRemove).sort(function(a,b){ return a-b; }).join(', ');
+            });
+          });
+        });
+      });
+
+      goBtn.addEventListener('click', function(){
+        if(!file){ showError('Choose a file first.'); return; }
+        if(!toRemove.size){ showError('Tick at least one page to remove.'); return; }
+        api().pick_save_path(baseName(file.name) + '-edited.pdf').then(function(savePath){
+          if(!savePath) return;
+          runGuarded(function(){
+            return api().remove_pages(file.path, Array.from(toRemove), savePath).then(function(){ showSuccess(successBlock(savePath)); });
+          });
+        });
+      });
+      return;
+    }
+
+    // ---- split (type a range, click thumbnails, or both — stays in sync) ----
+    if(t.kind === 'split'){
+      var picked = new Set();
+
+      body.innerHTML = '<div id="wfFileSlot"></div><div class="panel-box" style="display:none" id="splitBox"><h4>Pages to extract</h4>'
+        + '<div class="field"><input type="text" id="rangeInput" placeholder="e.g. 1-3, 5"><div class="hint">Type a range, or click pages below. Leave blank to split into one file per page.</div></div>'
+        + '<div class="pagestrip" id="splitStrip" style="margin-top:10px"></div>'
+        + '<label class="checkrow" style="margin-top:12px"><input type="checkbox" id="mergeCheck"> Combine the extracted pages into one PDF file</label>'
+        + '<div class="hint" id="splitInfo"></div></div>';
+
+      function refreshSplitChips(){
+        byId('splitStrip').querySelectorAll('.pagechip').forEach(function(chip){
+          chip.classList.toggle('active', picked.has(parseInt(chip.dataset.page, 10)));
+        });
+      }
+      function updateSplitInfo(){
+        var ranges = pagesToRanges(picked);
+        var merge = byId('mergeCheck').checked;
+        var n = picked.size === 0 ? 0 : (merge ? 1 : ranges.length);
+        byId('splitInfo').textContent = picked.size === 0
+          ? 'Nothing selected — every page becomes its own file.'
+          : (n + (n === 1 ? ' PDF will be created.' : ' PDFs will be created.'));
+      }
+      byId('rangeInput').addEventListener('input', function(){
+        picked = new Set();
+        parseRangeString(byId('rangeInput').value).forEach(function(r){
+          for(var p = r[0]; p <= r[1]; p++) picked.add(p);
+        });
+        refreshSplitChips();
+        updateSplitInfo();
+      });
+      byId('mergeCheck').addEventListener('change', updateSplitInfo);
+
+      setupSingleFile(['splitBox'], function(){
+        picked = new Set();
+        byId('rangeInput').value = '';
+        updateSplitInfo();
+        api().page_count(file.path).then(function(n){
+          renderPageThumbs(byId('splitStrip'), file.path, n);
+          byId('splitStrip').querySelectorAll('.pagechip').forEach(function(chip){
+            chip.addEventListener('click', function(){
+              var p = parseInt(chip.dataset.page, 10);
+              if(picked.has(p)) picked.delete(p); else picked.add(p);
+              chip.classList.toggle('active');
+              byId('rangeInput').value = rangesToString(pagesToRanges(picked));
+              updateSplitInfo();
+            });
+          });
+        });
+      });
+
+      goBtn.addEventListener('click', function(){
+        if(!file){ showError('Choose a file first.'); return; }
+        var ranges = picked.size ? pagesToRanges(picked) : null;
+        var merge = picked.size > 0 && byId('mergeCheck').checked;
+        api().pick_save_dir().then(function(dir){
+          if(!dir) return;
+          runGuarded(function(){
+            return api().split(file.path, dir, ranges, merge).then(function(res){
+              showSuccess(successBlock(dir, res.outputs.length + (res.outputs.length === 1 ? ' file' : ' files')));
+            });
+          });
+        });
+      });
       return;
     }
 
@@ -685,7 +789,7 @@
       });
       setupSingleFile(['cmpBox']);
       goBtn.addEventListener('click', function(){
-        if(!file) return;
+        if(!file){ showError('Choose a file first.'); return; }
         api().pick_save_path(baseName(file.name) + '-compressed.pdf').then(function(savePath){
           if(!savePath) return;
           runGuarded(function(){
@@ -699,18 +803,47 @@
       return;
     }
 
-    // ---- watermark ----
+    // ---- watermark (adjustable size/opacity, live preview, every page) ----
     if(t.kind === 'watermark'){
-      body.innerHTML = '<div id="wfFileSlot"></div><div class="panel-box" style="display:none" id="wmBox"><h4>Watermark text</h4>'
-        + '<div class="field"><input type="text" id="wmInput" placeholder="e.g. DRAFT or CONFIDENTIAL" value="CONFIDENTIAL"></div></div>';
-      setupSingleFile(['wmBox']);
+      body.innerHTML = '<div id="wfFileSlot"></div><div class="panel-box" style="display:none" id="wmBox"><h4>Watermark</h4>'
+        + '<div class="field"><input type="text" id="wmInput" placeholder="e.g. DRAFT or CONFIDENTIAL" value="CONFIDENTIAL"></div>'
+        + '<div class="sliderrow"><label>Font size</label><input type="range" id="wmSize" min="12" max="120" value="48"><span class="val" id="wmSizeVal">48pt</span></div>'
+        + '<div class="sliderrow"><label>Opacity</label><input type="range" id="wmOpacity" min="5" max="80" value="25"><span class="val" id="wmOpacityVal">25%</span></div>'
+        + '<div class="hint" style="margin-bottom:6px">Preview — applies the same way to every page:</div>'
+        + '<div class="wm-preview" id="wmPreview"></div></div>';
+
+      function updatePreview(){
+        var textEl = byId('wmPreviewText');
+        if(!textEl) return;
+        var scale = parseFloat(byId('wmPreview').getAttribute('data-scale') || '1');
+        var size = parseInt(byId('wmSize').value, 10);
+        var opacity = parseInt(byId('wmOpacity').value, 10) / 100;
+        textEl.textContent = byId('wmInput').value.trim() || 'CONFIDENTIAL';
+        textEl.style.fontSize = (size * scale) + 'px';
+        textEl.style.opacity = opacity;
+      }
+      byId('wmInput').addEventListener('input', updatePreview);
+      byId('wmSize').addEventListener('input', function(){ byId('wmSizeVal').textContent = byId('wmSize').value + 'pt'; updatePreview(); });
+      byId('wmOpacity').addEventListener('input', function(){ byId('wmOpacityVal').textContent = byId('wmOpacity').value + '%'; updatePreview(); });
+
+      setupSingleFile(['wmBox'], function(){
+        api().render_page_preview(file.path, 1, 520).then(function(r){
+          var wrap = byId('wmPreview');
+          wrap.setAttribute('data-scale', r.scale);
+          wrap.innerHTML = '<img src="data:image/png;base64,' + r.image_b64 + '"><div class="wm-preview-text" id="wmPreviewText"></div>';
+          updatePreview();
+        });
+      });
+
       goBtn.addEventListener('click', function(){
-        if(!file) return;
+        if(!file){ showError('Choose a file first.'); return; }
         var text = byId('wmInput').value.trim() || 'CONFIDENTIAL';
+        var fontSize = parseInt(byId('wmSize').value, 10);
+        var opacity = parseInt(byId('wmOpacity').value, 10) / 100;
         api().pick_save_path(baseName(file.name) + '-watermarked.pdf').then(function(savePath){
           if(!savePath) return;
           runGuarded(function(){
-            return api().watermark(file.path, text, savePath).then(function(){ showSuccess(successBlock(savePath)); });
+            return api().watermark(file.path, text, savePath, opacity, fontSize).then(function(){ showSuccess(successBlock(savePath)); });
           });
         });
       });
@@ -733,7 +866,7 @@
       });
       setupSingleFile(['pwBox']);
       goBtn.addEventListener('click', function(){
-        if(!file) return;
+        if(!file){ showError('Choose a file first.'); return; }
         var p1 = byId('pwOne').value, p2 = byId('pwTwo').value;
         var hint = byId('pwHint');
         if(!p1){ hint.textContent = 'Enter a password.'; hint.style.color = 'var(--warn)'; return; }
@@ -863,7 +996,7 @@
       });
 
       goBtn.addEventListener('click', function(){
-        if(!file) return;
+        if(!file){ showError('Choose a file first.'); return; }
         var checkedIdx = Array.prototype.slice.call(document.querySelectorAll('#wfMatches [data-idx]:checked')).map(function(cb){ return parseInt(cb.getAttribute('data-idx'),10); });
         var boxes = checkedIdx.map(function(i){ return {page: autoMatches[i].page, rect: autoMatches[i].rect}; }).concat(manualBoxes);
         if(!boxes.length){ showError('Scan for matches or draw at least one manual box first.'); return; }
@@ -876,6 +1009,20 @@
       });
       return;
     }
+  }
+
+  // Dropped files can't reliably expose a real filesystem path from the
+  // browser side across every pywebview/OS combination, so drag-and-drop
+  // ships the actual bytes to Python over the same bridge every other
+  // action already uses (Api.receive_dropped_file), instead of guessing at
+  // a path. readAsDataURL is the browser's own (fast, native) base64 path.
+  function fileToBase64(file){
+    return new Promise(function(resolve, reject){
+      var reader = new FileReader();
+      reader.onload = function(){ resolve(reader.result.split(',')[1]); };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
   }
 
   function wireSingleFileDrop(t, onFile){
@@ -891,10 +1038,82 @@
       e.preventDefault();
       drop.classList.remove('drag');
       var f = e.dataTransfer.files && e.dataTransfer.files[0];
-      var path = f && (f.pywebviewFullPath || f.path);
-      if(path){ onFile({path: path, name: f.name, size: f.size}); }
-      else { api().pick_open_file(t.accept).then(function(picked){ if(picked) onFile(picked); }); }
+      if(!f) return;
+      fileToBase64(f).then(function(b64){ return api().receive_dropped_file(f.name, b64); }).then(onFile);
     });
+  }
+
+  function wireMultiFileDrop(drop, accept, onFiles){
+    drop.addEventListener('click', function(){
+      api().pick_open_files(accept).then(function(picked){ if(picked && picked.length) onFiles(picked); });
+    });
+    drop.addEventListener('keydown', function(e){ if(e.key==='Enter') drop.click(); });
+    ['dragenter','dragover'].forEach(function(ev){ drop.addEventListener(ev, function(e){ e.preventDefault(); drop.classList.add('drag'); }); });
+    ['dragleave'].forEach(function(ev){ drop.addEventListener(ev, function(e){ e.preventDefault(); drop.classList.remove('drag'); }); });
+    drop.addEventListener('drop', function(e){
+      e.preventDefault();
+      drop.classList.remove('drag');
+      var list = e.dataTransfer.files;
+      if(!list || !list.length) return;
+      Promise.all(Array.prototype.map.call(list, function(f){
+        return fileToBase64(f).then(function(b64){ return api().receive_dropped_file(f.name, b64); });
+      })).then(onFiles);
+    });
+  }
+
+  // Shared thumbnail grid used by Split, Rotate, and Remove Pages. Chips
+  // render immediately; each page's image streams in async. onImgLoaded
+  // lets a caller apply its own per-page state (e.g. Rotate's live CSS
+  // rotation) right as each thumbnail lands, and add extra controls to
+  // the chip (e.g. Rotate's per-page buttons).
+  function renderPageThumbs(container, filePath, pageCount, onImgLoaded){
+    container.innerHTML = '';
+    for(var i=1;i<=pageCount;i++){
+      (function(pageNum){
+        var chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'pagechip';
+        chip.dataset.page = pageNum;
+        chip.innerHTML = '<span class="pagechip-check"><svg viewBox="0 0 20 20" fill="none"><path d="M4 10.5l4 4L16 6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span>Page '+pageNum+'</span>';
+        container.appendChild(chip);
+        api().render_page_preview(filePath, pageNum).then(function(r){
+          var img = document.createElement('img');
+          img.className = 'pagechip-rotimg';
+          img.src = 'data:image/png;base64,' + r.image_b64;
+          chip.insertBefore(img, chip.firstChild);
+          if(onImgLoaded) onImgLoaded(pageNum, img, chip);
+        });
+      })(i);
+    }
+  }
+
+  // Collapses a set of page numbers into 1-indexed inclusive [start,end]
+  // ranges, e.g. {1,2,3,7} -> [[1,3],[7,7]]. Used so clicking three
+  // consecutive thumbnails behaves identically to typing "1-3".
+  function pagesToRanges(pageSet){
+    var pages = Array.from(pageSet).sort(function(a,b){ return a-b; });
+    var ranges = [], start = null, prev = null;
+    pages.forEach(function(p){
+      if(start === null){ start = p; prev = p; return; }
+      if(p === prev + 1){ prev = p; return; }
+      ranges.push([start, prev]);
+      start = p; prev = p;
+    });
+    if(start !== null) ranges.push([start, prev]);
+    return ranges;
+  }
+  function rangesToString(ranges){
+    return ranges.map(function(r){ return r[0]===r[1] ? ''+r[0] : r[0]+'-'+r[1]; }).join(', ');
+  }
+  function parseRangeString(str){
+    var out = [];
+    (str||'').split(',').forEach(function(part){
+      part = part.trim();
+      var m = part.match(/^(\d+)\s*-\s*(\d+)$/);
+      if(m) out.push([parseInt(m[1],10), parseInt(m[2],10)]);
+      else if(/^\d+$/.test(part)) out.push([parseInt(part,10), parseInt(part,10)]);
+    });
+    return out;
   }
 
   renderFilterBar();

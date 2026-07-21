@@ -4,7 +4,13 @@ Everything below runs locally: file dialogs are native OS dialogs, all PDF/
 Office processing happens with the libraries in core/, and nothing here ever
 opens a network socket. Built for Piyush J. Shah & Co., Chartered Accountant.
 """
+import base64
+import functools
+import logging
 import sys
+import tempfile
+import traceback
+import uuid
 from pathlib import Path
 
 import webview
@@ -12,6 +18,50 @@ import webview
 sys.path.insert(0, str(Path(__file__).parent))
 
 from core import convert_from_pdf, convert_to_pdf, optimize, organize, paths, preview, security
+
+# The packaged app runs with --windowed (no console), so without a log file
+# a failure like "nothing happens, no error shown" leaves zero trace to
+# debug from. Every Api call's exceptions get written here.
+LOG_DIR = paths.default_output_dir().parent / "PJS Logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+LOG_FILE = LOG_DIR / "pjs-studio.log"
+logging.basicConfig(
+    filename=str(LOG_FILE),
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+)
+logger = logging.getLogger("pjs")
+
+
+def _log_uncaught(exc_type, exc_value, exc_tb):
+    logger.error("Uncaught exception:\n%s", "".join(traceback.format_exception(exc_type, exc_value, exc_tb)))
+
+
+sys.excepthook = _log_uncaught
+
+
+def _log_errors(fn):
+    """Wraps an Api method so any exception is logged to disk and re-raised
+    as a plain RuntimeError, which pywebview reliably marshals back to the
+    UI's error box as a readable string."""
+
+    @functools.wraps(fn)
+    def wrapper(self, *args, **kwargs):
+        try:
+            return fn(self, *args, **kwargs)
+        except Exception as e:
+            logger.exception("Api.%s failed (args=%r)", fn.__name__, args)
+            raise RuntimeError(str(e) or f"{type(e).__name__} in {fn.__name__}") from None
+
+    return wrapper
+
+
+def _log_all_methods(cls):
+    for name, value in list(vars(cls).items()):
+        if callable(value) and not name.startswith("_"):
+            setattr(cls, name, _log_errors(value))
+    return cls
+
 
 FILE_TYPE_LABELS = {
     ".pdf": "PDF Files (*.pdf)",
@@ -38,9 +88,26 @@ def _file_info(path: str) -> dict:
     return {"path": str(p), "name": p.name, "size": p.stat().st_size}
 
 
+@_log_all_methods
 class Api:
     def __init__(self):
         self.window = None  # attached after window creation, needed for dialogs
+
+    # ---------- drag-and-drop ----------
+    def receive_dropped_file(self, name: str, data_b64: str):
+        """The browser side can't reliably read a real filesystem path off a
+        dropped file in every pywebview/OS combination, so drag-and-drop
+        ships the file's actual bytes over the same bridge every other call
+        uses instead of guessing at a path. Written to a per-drop temp file
+        so the rest of the app can treat it exactly like a dialog-picked file."""
+        drop_dir = Path(tempfile.gettempdir()) / "pjs-pdf-studio-drops"
+        drop_dir.mkdir(parents=True, exist_ok=True)
+        safe_name = Path(name).name  # strip any path component the browser sent
+        dest = drop_dir / f"{uuid.uuid4().hex}_{safe_name}"
+        dest.write_bytes(base64.b64decode(data_b64))
+        info = _file_info(str(dest))
+        info["name"] = safe_name  # show the real filename, not the uuid-prefixed temp one
+        return info
 
     # ---------- file / save dialogs (native OS dialogs, no fake modal) ----------
     def pick_open_file(self, accept: str = ""):
@@ -76,12 +143,12 @@ class Api:
         organize.merge_pdfs(file_paths, save_path)
         return {"ok": True}
 
-    def split(self, file_path, save_dir, ranges=None):
-        outputs = organize.split_pdf(file_path, save_dir, ranges)
+    def split(self, file_path, save_dir, ranges=None, merge=False):
+        outputs = organize.split_pdf(file_path, save_dir, ranges, merge)
         return {"ok": True, "outputs": outputs}
 
-    def rotate(self, file_path, degrees, save_path):
-        organize.rotate_pdf(file_path, degrees, save_path)
+    def rotate(self, file_path, save_path, rotations):
+        organize.rotate_pdf(file_path, save_path, rotations)
         return {"ok": True}
 
     def remove_pages(self, file_path, page_numbers, save_path):
@@ -95,8 +162,8 @@ class Api:
     def compress(self, file_path, level, save_path):
         return optimize.compress_pdf(file_path, level, save_path)
 
-    def watermark(self, file_path, text, save_path):
-        optimize.watermark_pdf(file_path, text, save_path)
+    def watermark(self, file_path, text, save_path, opacity=0.25, font_size=48):
+        optimize.watermark_pdf(file_path, text, save_path, opacity, font_size)
         return {"ok": True}
 
     # ---------- security ----------

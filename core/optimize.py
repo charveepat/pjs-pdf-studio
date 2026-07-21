@@ -80,16 +80,24 @@ def compress_pdf(path: str, level: str, save_path: str) -> dict:
     return {"before_bytes": before, "after_bytes": after}
 
 
-def watermark_pdf(path: str, text: str, save_path: str, opacity: float = 0.25) -> None:
+def watermark_pdf(
+    path: str, text: str, save_path: str, opacity: float = 0.25, font_size: float = 48
+) -> None:
+    """Applied to every page — text is centered and stamped diagonally."""
     doc = fitz.open(path)
     theta = math.radians(45)
     rot = fitz.Matrix(math.cos(theta), math.sin(theta), -math.sin(theta), math.cos(theta), 0, 0)
+    text_width = fitz.get_text_length(text, fontname="helv", fontsize=font_size)
     for page in doc:
         center = (page.rect.width / 2, page.rect.height / 2)
+        # insert_text's point is the baseline start, not the text's visual
+        # center, so start half the text's width to the left of center —
+        # otherwise the stamp reads as noticeably off-center on the page.
+        origin = (center[0] - text_width / 2, center[1])
         page.insert_text(
-            center,
+            origin,
             text,
-            fontsize=48,
+            fontsize=font_size,
             fontname="helv",
             color=(0.5, 0.5, 0.5),
             fill_opacity=opacity,

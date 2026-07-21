@@ -1,5 +1,4 @@
 """PDF -> Word / Excel / PowerPoint / Images. All pure Python, no Office needed."""
-import shutil
 import tempfile
 from pathlib import Path
 
@@ -7,7 +6,13 @@ import fitz
 from openpyxl import Workbook
 from pdf2docx import Converter
 from pptx import Presentation
-from pptx.util import Inches
+from pptx.dml.color import RGBColor
+from pptx.enum.text import MSO_ANCHOR
+from pptx.util import Emu, Pt
+
+EMU_PER_POINT = 12700  # exact: 914400 EMU/inch / 72 points/inch
+PDF_BOLD_FLAG = 1 << 4
+PDF_ITALIC_FLAG = 1 << 1
 
 
 def pdf_to_word(path: str, save_path: str) -> None:
@@ -38,27 +43,104 @@ def pdf_to_excel(path: str, save_path: str) -> dict:
     return {"tables_found": table_count}
 
 
-def pdf_to_ppt(path: str, save_path: str, dpi: int = 150) -> None:
-    """Renders each page to an image and places it full-bleed on a slide.
-    Reliable for any PDF; slides are not text-editable, only image-editable."""
+def _add_text_block(slide, block, page_height_pt):
+    lines = [ln for ln in block.get("lines", []) if ln.get("spans")]
+    if not lines:
+        return
+    x0, y0, x1, y1 = block["bbox"]
+    # PDF text bboxes hug the glyphs tightly; give the textbox a little
+    # breathing room so descenders/ascenders don't get clipped in PowerPoint.
+    pad_pt = 2
+    box = slide.shapes.add_textbox(
+        Emu(int((x0 - pad_pt) * EMU_PER_POINT)),
+        Emu(int((y0 - pad_pt) * EMU_PER_POINT)),
+        Emu(int((x1 - x0 + 2 * pad_pt) * EMU_PER_POINT)),
+        Emu(int((y1 - y0 + 2 * pad_pt) * EMU_PER_POINT)),
+    )
+    tf = box.text_frame
+    tf.word_wrap = True
+    tf.vertical_anchor = MSO_ANCHOR.TOP
+    tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
+
+    for i, line in enumerate(lines):
+        para = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+        for span in line["spans"]:
+            text = span.get("text", "")
+            if not text:
+                continue
+            run = para.add_run()
+            run.text = text
+            size = span.get("size", 12)
+            run.font.size = Pt(max(1, round(size)))
+            flags = span.get("flags", 0)
+            run.font.bold = bool(flags & PDF_BOLD_FLAG)
+            run.font.italic = bool(flags & PDF_ITALIC_FLAG)
+            color_int = span.get("color", 0)
+            r = (color_int >> 16) & 255
+            g = (color_int >> 8) & 255
+            b = color_int & 255
+            run.font.color.rgb = RGBColor(r, g, b)
+            # Font *family* isn't preserved — PDF embeds subset fonts under
+            # internal names (e.g. "ABCDEE+Calibri-Bold") that rarely match
+            # an installed PowerPoint font, so guessing one in would more
+            # often replace a correct-looking font with a wrong one.
+
+
+def _add_page_images(slide, page, doc):
+    for xref, *_ in page.get_images(full=True):
+        rects = page.get_image_rects(xref)
+        if not rects:
+            continue
+        rect = rects[0]
+        try:
+            info = doc.extract_image(xref)
+        except Exception:
+            continue
+        ext = info.get("ext", "png")
+        tmp = tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False)
+        try:
+            tmp.write(info["image"])
+            tmp.close()
+            slide.shapes.add_picture(
+                tmp.name,
+                Emu(int(rect.x0 * EMU_PER_POINT)),
+                Emu(int(rect.y0 * EMU_PER_POINT)),
+                Emu(int(rect.width * EMU_PER_POINT)),
+                Emu(int(rect.height * EMU_PER_POINT)),
+            )
+        finally:
+            Path(tmp.name).unlink(missing_ok=True)
+
+
+def pdf_to_ppt(path: str, save_path: str) -> None:
+    """Rebuilds each page as real, editable PowerPoint content: text blocks
+    become editable text boxes (position, size, bold/italic, and color
+    preserved; font family is not — see _add_text_block), and embedded
+    images become separate picture shapes rather than one flattened
+    page-sized raster. Works best on simple, single-column layouts; dense
+    multi-column pages may need manual tidying after conversion, the same
+    trade-off as PDF to Word."""
     doc = fitz.open(path)
-    prs = Presentation()
-    prs.slide_width = Inches(13.333)
-    prs.slide_height = Inches(7.5)
-    blank_layout = prs.slide_layouts[6]
-    mat = fitz.Matrix(dpi / 72, dpi / 72)
-    tmp_dir = tempfile.mkdtemp(prefix="pjs_ppt_")
-    try:
-        for page in doc:
-            pix = page.get_pixmap(matrix=mat)
-            img_path = str(Path(tmp_dir) / f"p{page.number}.png")
-            pix.save(img_path)
-            slide = prs.slides.add_slide(blank_layout)
-            slide.shapes.add_picture(img_path, 0, 0, width=prs.slide_width, height=prs.slide_height)
-        prs.save(save_path)
-    finally:
+    if doc.page_count == 0:
         doc.close()
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise ValueError("This PDF has no pages.")
+
+    first = doc[0]
+    prs = Presentation()
+    prs.slide_width = Emu(int(first.rect.width * EMU_PER_POINT))
+    prs.slide_height = Emu(int(first.rect.height * EMU_PER_POINT))
+    blank_layout = prs.slide_layouts[6]
+
+    for page in doc:
+        slide = prs.slides.add_slide(blank_layout)
+        _add_page_images(slide, page, doc)
+        text_dict = page.get_text("dict")
+        for block in text_dict.get("blocks", []):
+            if block.get("type") == 0:  # 0 = text, 1 = image (images handled separately above)
+                _add_text_block(slide, block, first.rect.height)
+
+    doc.close()
+    prs.save(save_path)
 
 
 def pdf_to_images(path: str, save_dir: str, fmt: str = "png", dpi: int = 150) -> list[str]:

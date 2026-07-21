@@ -22,7 +22,10 @@ jobs:
 
       - name: Build with PyInstaller
         run: |
-          pyinstaller --onefile --windowed --name "PJS Pdf Studio" --add-data "ui;ui" main.py
+          pyinstaller --onefile --windowed --name "PJS Pdf Studio" --add-data "ui;ui" `
+            --collect-all pdfminer `
+            --hidden-import win32timezone `
+            main.py
 
       - name: Upload exe
         uses: actions/upload-artifact@v4
