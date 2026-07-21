@@ -13,6 +13,21 @@ from pptx.util import Emu, Pt
 EMU_PER_POINT = 12700  # exact: 914400 EMU/inch / 72 points/inch
 PDF_BOLD_FLAG = 1 << 4
 PDF_ITALIC_FLAG = 1 << 1
+PUA_START, PUA_END = 0xE000, 0xF8FF  # Unicode Private Use Area
+
+
+def _sanitize_text(text: str) -> str:
+    """Bullet-list markers in PowerPoint-exported PDFs are usually a
+    character from a symbol font (Wingdings, Webdings, etc.) rendered via
+    that font's own private glyph mapping — e.g. Wingdings code point
+    U+F0D8 is a right-pointing arrow. Extracted as plain text and dropped
+    into a normal font, those code points have no defined glyph at all and
+    render as broken boxes throughout the deck (this was the "huge issue").
+    Since we don't carry the original font family over (see _add_text_block),
+    there's no font install that would make the real glyph show up either —
+    swapping in a plain bullet character preserves what the mark actually
+    meant instead of showing a hole in the page."""
+    return "".join("•" if PUA_START <= ord(c) <= PUA_END else c for c in text)
 
 
 def pdf_to_word(path: str, save_path: str) -> None:
@@ -65,7 +80,7 @@ def _add_text_block(slide, block, page_height_pt):
     for i, line in enumerate(lines):
         para = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
         for span in line["spans"]:
-            text = span.get("text", "")
+            text = _sanitize_text(span.get("text", ""))
             if not text:
                 continue
             run = para.add_run()

@@ -1,15 +1,24 @@
 """Compress and watermark.
 
-Compression uses the same two levers real PDF compressors (Ghostscript's
-/screen, /ebook presets; iLovePDF, etc.) rely on: downsampling embedded
-images to a target resolution for how large they're actually drawn on the
-page, and re-encoding at a target JPEG quality. Quality alone barely moves
-the needle on a typical scanned/photo-heavy PDF — a 300 DPI page scan is
-still a 300 DPI page scan at quality 35 unless the pixel count itself comes
-down too. Images are replaced via Page.replace_image(), which handles the
-PDF object bookkeeping correctly; hand-editing the xref's stream/filter keys
-directly (an earlier version of this function did that) produces PDFs whose
-JPEG streams silently corrupt on save."""
+Compression uses three levers, applied in this order:
+  1. Font subsetting (doc.subset_fonts()) — embedded font programs are
+     trimmed down to only the glyphs actually used. On a typical
+     PowerPoint-exported PDF this alone is often a bigger win than the
+     images: a presentation can easily embed 300-600KB of full font data
+     to use a few dozen glyphs from it.
+  2. Downsampling embedded images to a target resolution for how large
+     they're actually drawn on the page — a 300 DPI scan is still a
+     300 DPI scan at low JPEG quality unless the pixel count itself comes
+     down too.
+  3. Re-encoding at a target JPEG quality, but only keeping the result if
+     it's actually smaller — an image that's already an efficiently-encoded
+     JPEG below the target resolution can come out *larger* after a naive
+     re-encode, which is what made "Low" inflate files instead of shrinking
+     them.
+Images are replaced via Page.replace_image(), which handles the PDF object
+bookkeeping correctly; hand-editing the xref's stream/filter keys directly
+(an earlier version of this function did that) produces PDFs whose JPEG
+streams silently corrupt on save."""
 import io
 import math
 from pathlib import Path
@@ -21,9 +30,9 @@ from PIL import Image
 # the page). Only downsamples — an image already below the target DPI is
 # left alone, never upscaled.
 LEVELS = {
-    "low": {"quality": 82, "target_dpi": 200},
-    "recommended": {"quality": 65, "target_dpi": 150},
-    "extreme": {"quality": 40, "target_dpi": 96},
+    "low": {"quality": 75, "target_dpi": 160},
+    "recommended": {"quality": 48, "target_dpi": 115},
+    "extreme": {"quality": 25, "target_dpi": 78},
 }
 
 
@@ -32,6 +41,11 @@ def compress_pdf(path: str, level: str, save_path: str) -> dict:
     before = Path(path).stat().st_size
 
     doc = fitz.open(path)
+
+    try:
+        doc.subset_fonts()
+    except Exception:
+        pass  # a handful of unusual embedded fonts shouldn't sink the whole file
 
     # Map each image xref to one on-page rect (in points) so we can tell how
     # many pixels it actually needs. The same image can be reused across
@@ -48,6 +62,8 @@ def compress_pdf(path: str, level: str, save_path: str) -> dict:
 
     for xref, (page, rect) in xref_pages_rects.items():
         try:
+            original_size = len(doc.extract_image(xref)["image"])
+
             pix = fitz.Pixmap(doc, xref)
             if pix.colorspace is None:  # e.g. a stencil/mask image, leave alone
                 continue
@@ -69,7 +85,13 @@ def compress_pdf(path: str, level: str, save_path: str) -> dict:
 
             buf = io.BytesIO()
             pil_img.save(buf, format="JPEG", quality=cfg["quality"], optimize=True)
-            page.replace_image(xref, stream=buf.getvalue())
+            new_bytes = buf.getvalue()
+
+            # Re-encoding an already-efficient JPEG at a conservative quality
+            # (typical of the "low" tier) can come out bigger than it started
+            # — only replace the image if this pass actually helped.
+            if len(new_bytes) < original_size:
+                page.replace_image(xref, stream=new_bytes)
         except Exception:
             continue  # a handful of odd/indexed images shouldn't sink the whole file
 
