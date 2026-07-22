@@ -58,8 +58,38 @@ def pdf_to_excel(path: str, save_path: str) -> dict:
     return {"tables_found": table_count}
 
 
+def _visual_lines(block):
+    """PyMuPDF's own "lines" grouping is driven by the PDF's text-showing
+    operators, not by what's visually on the same row. PDFs that position
+    every word with its own explicit placement (PowerPoint's PDF export does
+    this routinely) come out of get_text("dict") as one "line" per *word* —
+    same y0/y1, but each its own entry. Re-cluster spans by vertical bbox
+    overlap instead, so a sentence PyMuPDF fragmented into eight one-word
+    lines becomes the single flowing line it actually is on the page."""
+    raw = [ln for ln in block.get("lines", []) if ln.get("spans")]
+    clusters = []
+    for ln in raw:
+        y0, y1 = ln["bbox"][1], ln["bbox"][3]
+        target = None
+        for c in clusters:
+            overlap = min(y1, c["y1"]) - max(y0, c["y0"])
+            if overlap > 0.5 * min(y1 - y0, c["y1"] - c["y0"]):
+                target = c
+                break
+        if target is None:
+            clusters.append({"y0": y0, "y1": y1, "spans": list(ln["spans"])})
+        else:
+            target["spans"].extend(ln["spans"])
+            target["y0"] = min(target["y0"], y0)
+            target["y1"] = max(target["y1"], y1)
+    for c in clusters:
+        c["spans"].sort(key=lambda s: s["bbox"][0])  # left-to-right reading order
+    clusters.sort(key=lambda c: c["y0"])
+    return clusters
+
+
 def _add_text_block(slide, block, page_height_pt):
-    lines = [ln for ln in block.get("lines", []) if ln.get("spans")]
+    lines = _visual_lines(block)
     if not lines:
         return
     x0, y0, x1, y1 = block["bbox"]
@@ -79,10 +109,17 @@ def _add_text_block(slide, block, page_height_pt):
 
     for i, line in enumerate(lines):
         para = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
-        for span in line["spans"]:
+        spans = line["spans"]
+        for j, span in enumerate(spans):
             text = _sanitize_text(span.get("text", ""))
             if not text:
                 continue
+            # Independently-placed words carry no space of their own — infer
+            # one from the real gap between this word and the previous.
+            if j > 0:
+                gap = span["bbox"][0] - spans[j - 1]["bbox"][2]
+                if gap > 1.0:
+                    text = " " + text
             run = para.add_run()
             run.text = text
             size = span.get("size", 12)

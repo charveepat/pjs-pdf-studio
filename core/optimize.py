@@ -95,7 +95,16 @@ def compress_pdf(path: str, level: str, save_path: str) -> dict:
         except Exception:
             continue  # a handful of odd/indexed images shouldn't sink the whole file
 
-    doc.save(save_path, garbage=4, deflate=True, clean=True)
+    doc.save(
+        save_path,
+        garbage=4,
+        deflate=True,
+        deflate_images=True,
+        deflate_fonts=True,
+        clean=True,
+        use_objstms=True,
+        compression_effort=100,
+    )
     doc.close()
 
     after = Path(save_path).stat().st_size
