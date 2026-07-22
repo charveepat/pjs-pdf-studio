@@ -1,34 +1,37 @@
 """Compress and watermark.
 
-Compression uses three levers, applied in this order:
-  1. Font subsetting (doc.subset_fonts()) — embedded font programs are
-     trimmed down to only the glyphs actually used. Run in an isolated
-     subprocess (see _subset_fonts_isolated below) because PyMuPDF's
-     subset_fonts() can segfault outright on PDFs whose fonts are already
-     subsetted — which is the normal case for most Word/PowerPoint/
-     Illustrator-generated PDFs, since those tools subset on export too.
-     A segfault is a native crash, not a Python exception, so no amount of
-     try/except in this file could ever catch it; only running it in a
-     throwaway process can contain it.
-  2. Downsampling embedded images to a target resolution for how large
-     they're actually drawn on the page — a 300 DPI scan is still a
-     300 DPI scan at low JPEG quality unless the pixel count itself comes
-     down too.
-  3. Re-encoding at a target JPEG quality, but only keeping the result if
-     it's actually smaller — an image that's already an efficiently-encoded
-     JPEG below the target resolution can come out *larger* after a naive
-     re-encode, which is what made "Low" inflate files instead of shrinking
-     them.
-Images are replaced via Page.replace_image(), which handles the PDF object
-bookkeeping correctly; hand-editing the xref's stream/filter keys directly
-(an earlier version of this function did that) produces PDFs whose JPEG
-streams silently corrupt on save.
+Not every PDF is compressible the same way, so compress_pdf picks one of two
+fundamentally different strategies per file:
 
-Finally, the whole output is compared to the original size — a PDF that's
-already efficiently packed can legitimately have nothing left to save once
-every image is skipped, and re-saving it can add a little structural
-overhead. Rather than hand back something bigger than what came in, we
-fall back to the original bytes and report 0% saved."""
+  - RECOMPRESS: shrink the embedded images in place (downsample + re-encode
+    as JPEG) and subset fonts. Works well, and preserves the document
+    exactly as-is otherwise, whenever there's real image data to shrink or
+    real selectable text worth keeping crisp.
+
+  - RASTERIZE: flatten every page into a single JPEG image. This is the only
+    thing that helps when a PDF's size comes from neither real images nor
+    real text — some report/statement generators draw every character as
+    vector path outlines instead of text or a picture, which produces
+    enormous, barely-compressible content streams with zero selectable
+    text. Verified on a real 21MB bank statement built exactly that way:
+    RECOMPRESS got 11%; RASTERIZE got 89-96%, and since the document had
+    no selectable text to begin with, rasterizing costs nothing that wasn't
+    already lost. RASTERIZE is also used at the Extreme tier for ordinary
+    text/vector PDFs (Word/PPT/Excel exports) once a user has explicitly
+    asked for maximum compression, since that's the only lever left after
+    font subsetting and there's nothing else to try.
+
+_choose_strategy() decides which applies to a given file and tier:
+  - image_ratio > 50% of file size            -> RECOMPRESS (a scan/photo
+    PDF; the current per-image approach already hits 90-96%+ on these)
+  - it has real extractable text              -> RECOMPRESS, except at
+    Extreme, which RASTERIZEs anyway for the size win once quality is an
+    accepted trade-off
+  - otherwise (no real text, images are minor) -> RASTERIZE at every tier,
+    since there's no text quality to protect
+
+Whichever strategy runs, the output is compared to the original size before
+returning — never hand back something bigger than what came in."""
 import io
 import math
 import multiprocessing
@@ -39,14 +42,27 @@ from pathlib import Path
 import fitz
 from PIL import Image
 
-# (jpeg quality, target DPI for however large the image is actually drawn on
-# the page). Only downsamples — an image already below the target DPI is
-# left alone, never upscaled.
+# RECOMPRESS: (jpeg quality, target DPI for however large the image is
+# actually drawn on the page). Only downsamples — an image already below
+# the target DPI is left alone, never upscaled.
 LEVELS = {
     "low": {"quality": 75, "target_dpi": 160},
     "recommended": {"quality": 35, "target_dpi": 95},
     "extreme": {"quality": 20, "target_dpi": 65},
 }
+
+# RASTERIZE: (jpeg quality, page render DPI). Used for PDFs with no real
+# image content and no real text (see module docstring). The "extreme"
+# entry here also doubles as the Extreme-tier fallback for ordinary text/
+# vector PDFs, tuned gentler than the other two rows since that case is
+# giving up real selectable text for the size win, not just flattening an
+# already-unselectable document.
+RASTER_LEVELS = {
+    "low": {"quality": 70, "dpi": 150},
+    "recommended": {"quality": 42, "dpi": 92},
+    "extreme": {"quality": 25, "dpi": 60},
+}
+RASTER_EXTREME_FOR_TEXT_PDF = {"quality": 20, "dpi": 45}
 
 
 def _subset_fonts_worker(path: str, out_path: str, result_queue):
@@ -86,14 +102,34 @@ def _subset_fonts_isolated(path: str) -> str | None:
     return None
 
 
-def compress_pdf(path: str, level: str, save_path: str) -> dict:
-    cfg = LEVELS.get(level, LEVELS["recommended"])
-    before = Path(path).stat().st_size
+def _image_ratio(doc: fitz.Document, file_size: int) -> float:
+    """Fraction of the file's size that's real embedded image data."""
+    total = 0
+    seen = set()
+    for page in doc:
+        for img_info in page.get_images(full=True):
+            xref = img_info[0]
+            if xref in seen:
+                continue
+            seen.add(xref)
+            try:
+                total += len(doc.extract_image(xref)["image"])
+            except Exception:
+                continue
+    return total / file_size if file_size else 0.0
 
-    subsetted_path = _subset_fonts_isolated(path)
-    working_path = subsetted_path or path
-    doc = fitz.open(working_path)
 
+def _has_real_text(doc: fitz.Document, sample_pages: int = 5) -> bool:
+    """A very low bar — just "is there any selectable text at all". Some
+    statement/report generators draw every character as vector path
+    outlines instead of text, which extracts as nothing; rasterizing such a
+    file costs no selectability, since it never had any."""
+    n = min(sample_pages, doc.page_count)
+    total_chars = sum(len(doc[i].get_text().strip()) for i in range(n))
+    return total_chars > 20 * n
+
+
+def _recompress_images(doc: fitz.Document, cfg: dict) -> None:
     # Map each image xref to one on-page rect (in points) so we can tell how
     # many pixels it actually needs. The same image can be reused across
     # pages (e.g. a letterhead) — process each xref exactly once, since
@@ -142,19 +178,64 @@ def compress_pdf(path: str, level: str, save_path: str) -> dict:
         except Exception:
             continue  # a handful of odd/indexed images shouldn't sink the whole file
 
-    doc.save(
-        save_path,
-        garbage=4,
-        deflate=True,
-        deflate_images=True,
-        deflate_fonts=True,
-        clean=True,
-        use_objstms=True,
-        compression_effort=100,
-    )
-    doc.close()
-    if subsetted_path:
-        Path(subsetted_path).unlink(missing_ok=True)
+
+def _rasterize(doc: fitz.Document, cfg: dict) -> fitz.Document:
+    """Returns a new document with every page flattened to one JPEG image."""
+    out = fitz.open()
+    mat = fitz.Matrix(cfg["dpi"] / 72, cfg["dpi"] / 72)
+    for page in doc:
+        pix = page.get_pixmap(matrix=mat)
+        pil_img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+        buf = io.BytesIO()
+        pil_img.save(buf, format="JPEG", quality=cfg["quality"], optimize=True)
+        newpage = out.new_page(width=page.rect.width, height=page.rect.height)
+        newpage.insert_image(newpage.rect, stream=buf.getvalue())
+    return out
+
+
+def compress_pdf(path: str, level: str, save_path: str) -> dict:
+    before = Path(path).stat().st_size
+
+    probe = fitz.open(path)
+    image_ratio = _image_ratio(probe, before)
+    has_text = _has_real_text(probe)
+    probe.close()
+
+    if image_ratio > 0.5:
+        strategy = "recompress"
+    elif not has_text:
+        strategy = "rasterize"
+    elif level == "extreme":
+        strategy = "rasterize"
+    else:
+        strategy = "recompress"
+
+    if strategy == "rasterize":
+        cfg = RASTER_LEVELS[level] if not has_text else RASTER_EXTREME_FOR_TEXT_PDF
+        doc = fitz.open(path)
+        out = _rasterize(doc, cfg)
+        doc.close()
+        out.save(save_path, garbage=4, deflate=True, deflate_images=True, clean=True, use_objstms=True, compression_effort=100)
+        out.close()
+    else:
+        cfg = LEVELS.get(level, LEVELS["recommended"])
+        subsetted_path = _subset_fonts_isolated(path)
+        working_path = subsetted_path or path
+        doc = fitz.open(working_path)
+        _recompress_images(doc, cfg)
+        doc.save(
+            save_path,
+            garbage=4,
+            deflate=True,
+            deflate_images=True,
+            deflate_fonts=True,
+            clean=True,
+            use_objstms=True,
+            compression_effort=100,
+        )
+        doc.close()
+        if subsetted_path:
+            Path(subsetted_path).unlink(missing_ok=True)
 
     after = Path(save_path).stat().st_size
     if after >= before:
