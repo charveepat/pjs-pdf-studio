@@ -14,7 +14,7 @@ PATTERNS = {
 
 def scan_sensitive(path: str, pattern_keys: list[str]) -> list[dict]:
     """Regex-based first pass over each page's text layer. Bank-account and
-    Aadhaar patterns are broad by design — the UI shows every hit with its
+    Aadhaar patterns are broad by design, the UI shows every hit with its
     own checkbox so a false positive just gets unchecked, not blacked out."""
     doc = fitz.open(path)
     results = []
@@ -43,7 +43,7 @@ def scan_sensitive(path: str, pattern_keys: list[str]) -> list[dict]:
 def redact_pdf(path: str, boxes: list[dict], save_path: str) -> None:
     """boxes: [{"page": 1-indexed, "rect": [x0,y0,x1,y1]}, ...].
     Uses PyMuPDF's real redaction annotations, which strip the underlying
-    text/image content on apply — not just a black rectangle drawn on top."""
+    text/image content on apply, not just a black rectangle drawn on top."""
     doc = fitz.open(path)
     for box in boxes:
         page = doc[box["page"] - 1]

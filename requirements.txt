@@ -7,4 +7,5 @@ python-pptx>=1.0
 Pillow>=12.0
 pywebview>=6.2
 pywin32; sys_platform == "win32"
+winocr; sys_platform == "win32"
 pyinstaller>=6.10; sys_platform == "win32"

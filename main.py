@@ -18,7 +18,7 @@ import webview
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from core import convert_from_pdf, convert_to_pdf, optimize, organize, paths, preview, security
+from core import convert_from_pdf, convert_to_pdf, legibility, optimize, organize, paths, preview, security
 
 # The packaged app runs with --windowed (no console), so without a log file
 # a failure like "nothing happens, no error shown" leaves zero trace to
@@ -163,6 +163,12 @@ class Api:
     def compress(self, file_path, level, save_path):
         return optimize.compress_pdf(file_path, level, save_path)
 
+    def compress_custom(self, file_path, target_pct, save_path):
+        return optimize.compress_pdf_custom(file_path, target_pct, save_path)
+
+    def ocr_available(self):
+        return legibility.is_available()
+
     def watermark(self, file_path, text, save_path, opacity=0.25, font_size=48):
         optimize.watermark_pdf(file_path, text, save_path, opacity, font_size)
         return {"ok": True}
@@ -240,7 +246,7 @@ def main():
 if __name__ == "__main__":
     # Required for multiprocessing (used to isolate a crash-prone PyMuPDF
     # call in compress_pdf) to work correctly in a frozen PyInstaller exe on
-    # Windows — without this, spawning a child process can re-launch the
+    # Windows, without this, spawning a child process can re-launch the
     # whole app instead of running the worker function.
     multiprocessing.freeze_support()
     main()

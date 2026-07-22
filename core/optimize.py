@@ -10,7 +10,7 @@ fundamentally different strategies per file:
 
   - RASTERIZE: flatten every page into a single JPEG image. This is the only
     thing that helps when a PDF's size comes from neither real images nor
-    real text — some report/statement generators draw every character as
+    real text, some report/statement generators draw every character as
     vector path outlines instead of text or a picture, which produces
     enormous, barely-compressible content streams with zero selectable
     text. Verified on a real 21MB bank statement built exactly that way:
@@ -31,7 +31,7 @@ _choose_strategy() decides which applies to a given file and tier:
     since there's no text quality to protect
 
 Whichever strategy runs, the output is compared to the original size before
-returning — never hand back something bigger than what came in."""
+returning, never hand back something bigger than what came in."""
 import io
 import math
 import multiprocessing
@@ -43,7 +43,7 @@ import fitz
 from PIL import Image
 
 # RECOMPRESS: (jpeg quality, target DPI for however large the image is
-# actually drawn on the page). Only downsamples — an image already below
+# actually drawn on the page). Only downsamples, an image already below
 # the target DPI is left alone, never upscaled.
 LEVELS = {
     "low": {"quality": 75, "target_dpi": 160},
@@ -64,6 +64,29 @@ RASTER_LEVELS = {
 }
 RASTER_EXTREME_FOR_TEXT_PDF = {"quality": 20, "dpi": 45}
 
+# Custom % ladders: finer-grained steps between the same already-validated
+# Low/Recommended/Extreme points above, so "compress to N%" has real rungs
+# to walk instead of just three fixed choices. Deliberately capped at the
+# same ceiling as Extreme - nothing here is more aggressive than what's
+# already been tested, only the in-between gentler steps are new.
+RECOMPRESS_LADDER = [
+    {"quality": 90, "target_dpi": 220},
+    {"quality": 75, "target_dpi": 160},  # = Low
+    {"quality": 55, "target_dpi": 125},
+    {"quality": 35, "target_dpi": 95},  # = Recommended
+    {"quality": 27, "target_dpi": 80},
+    {"quality": 20, "target_dpi": 65},  # = Extreme
+]
+RASTER_LADDER = [
+    {"quality": 80, "dpi": 180},
+    {"quality": 70, "dpi": 150},  # = Low
+    {"quality": 55, "dpi": 120},
+    {"quality": 42, "dpi": 92},  # = Recommended
+    {"quality": 32, "dpi": 75},
+    {"quality": 25, "dpi": 60},  # = Extreme
+]
+LEGIBILITY_FLOOR = 0.85  # at least this fraction of reference words must still OCR correctly
+
 
 def _subset_fonts_worker(path: str, out_path: str, result_queue):
     try:
@@ -78,7 +101,7 @@ def _subset_fonts_worker(path: str, out_path: str, result_queue):
 
 def _subset_fonts_isolated(path: str) -> str | None:
     """Returns a path to a font-subsetted copy, or None if subsetting failed
-    or crashed — callers should fall back to the original file either way."""
+    or crashed, callers should fall back to the original file either way."""
     tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
     tmp.close()
     queue = multiprocessing.Queue()
@@ -120,7 +143,7 @@ def _image_ratio(doc: fitz.Document, file_size: int) -> float:
 
 
 def _has_real_text(doc: fitz.Document, sample_pages: int = 5) -> bool:
-    """A very low bar — just "is there any selectable text at all". Some
+    """A very low bar, just "is there any selectable text at all". Some
     statement/report generators draw every character as vector path
     outlines instead of text, which extracts as nothing; rasterizing such a
     file costs no selectability, since it never had any."""
@@ -132,7 +155,7 @@ def _has_real_text(doc: fitz.Document, sample_pages: int = 5) -> bool:
 def _recompress_images(doc: fitz.Document, cfg: dict) -> None:
     # Map each image xref to one on-page rect (in points) so we can tell how
     # many pixels it actually needs. The same image can be reused across
-    # pages (e.g. a letterhead) — process each xref exactly once, since
+    # pages (e.g. a letterhead), process each xref exactly once, since
     # re-encoding an already-recompressed JPEG again would lose quality for
     # nothing.
     xref_pages_rects = {}
@@ -172,7 +195,7 @@ def _recompress_images(doc: fitz.Document, cfg: dict) -> None:
 
             # Re-encoding an already-efficient JPEG at a conservative quality
             # (typical of the "low" tier) can come out bigger than it started
-            # — only replace the image if this pass actually helped.
+            #, only replace the image if this pass actually helped.
             if len(new_bytes) < original_size:
                 page.replace_image(xref, stream=new_bytes)
         except Exception:
@@ -239,7 +262,7 @@ def compress_pdf(path: str, level: str, save_path: str) -> dict:
 
     after = Path(save_path).stat().st_size
     if after >= before:
-        # Nothing here actually helped this particular file — never hand
+        # Nothing here actually helped this particular file, never hand
         # back something bigger than what came in.
         shutil.copyfile(path, save_path)
         after = before
@@ -247,10 +270,150 @@ def compress_pdf(path: str, level: str, save_path: str) -> dict:
     return {"before_bytes": before, "after_bytes": after}
 
 
+def _sample_page_numbers(n: int, count: int = 3) -> list[int]:
+    """count evenly-spread page indices (0-indexed) to OCR-check, instead of
+    every page, real OCR takes real seconds per page and a handful of
+    pages is enough to catch a setting that's gone illegible."""
+    if n <= count:
+        return list(range(n))
+    step = n / count
+    return sorted({int(i * step) for i in range(count)})
+
+
+def _is_legible(original_path: str, candidate_path: str, has_text: bool, sample_pages: list[int]) -> bool | None:
+    """Returns True/False, or None if OCR verification isn't available on
+    this machine (compress_pdf_custom falls back to a best-effort result
+    without per-file verification in that case, and says so)."""
+    from core import legibility
+
+    if not legibility.is_available():
+        return None
+
+    original = fitz.open(original_path)
+    candidate = fitz.open(candidate_path)
+    accuracies = []
+    try:
+        for pno in sample_pages:
+            cpix = candidate[pno].get_pixmap(matrix=fitz.Matrix(2, 2))
+            cimg = Image.frombytes("RGB", (cpix.width, cpix.height), cpix.samples)
+            candidate_words = legibility.ocr_words(cimg)
+
+            if has_text:
+                reference_words = {w.lower() for w in original[pno].get_text().split() if w.strip()}
+            else:
+                opix = original[pno].get_pixmap(matrix=fitz.Matrix(300 / 72, 300 / 72))
+                oimg = Image.frombytes("RGB", (opix.width, opix.height), opix.samples)
+                reference_words = legibility.ocr_words(oimg)
+
+            accuracies.append(legibility.word_accuracy(reference_words, candidate_words))
+    finally:
+        original.close()
+        candidate.close()
+
+    if not accuracies:
+        return True
+    return (sum(accuracies) / len(accuracies)) >= LEGIBILITY_FLOOR
+
+
+def compress_pdf_custom(path: str, target_pct: float, save_path: str) -> dict:
+    """Walks a ladder of settings from gentle to the same ceiling as the
+    Extreme tier, stopping as soon as either the target percentage is hit or
+    OCR says the previous rung was the last legible one. Never goes past
+    what Extreme already does, so this can't produce a worse result than the
+    existing tiers, only a more precisely targeted one in between them."""
+    before = Path(path).stat().st_size
+
+    probe = fitz.open(path)
+    image_ratio = _image_ratio(probe, before)
+    has_text = _has_real_text(probe)
+    sample_pages = _sample_page_numbers(probe.page_count)
+    probe.close()
+
+    use_rasterize = image_ratio <= 0.5 and not has_text
+    ladder = RASTER_LADDER if use_rasterize else RECOMPRESS_LADDER
+
+    best_path = None
+    ocr_checked = False
+    stopped_by_ocr = False
+    for rung, cfg in enumerate(ladder):
+        candidate_path = f"{save_path}.candidate{rung}"
+        if use_rasterize:
+            doc = fitz.open(path)
+            out = _rasterize(doc, cfg)
+            doc.close()
+            out.save(candidate_path, garbage=4, deflate=True, deflate_images=True, clean=True, use_objstms=True, compression_effort=100)
+            out.close()
+        else:
+            subsetted_path = _subset_fonts_isolated(path)
+            working_path = subsetted_path or path
+            doc = fitz.open(working_path)
+            _recompress_images(doc, cfg)
+            doc.save(
+                candidate_path,
+                garbage=4,
+                deflate=True,
+                deflate_images=True,
+                deflate_fonts=True,
+                clean=True,
+                use_objstms=True,
+                compression_effort=100,
+            )
+            doc.close()
+            if subsetted_path:
+                Path(subsetted_path).unlink(missing_ok=True)
+
+        legible = _is_legible(path, candidate_path, has_text, sample_pages)
+        if legible is not None:
+            ocr_checked = True
+
+        if legible is False:
+            Path(candidate_path).unlink(missing_ok=True)
+            stopped_by_ocr = True
+            break
+
+        if best_path:
+            Path(best_path).unlink(missing_ok=True)
+        best_path = candidate_path
+
+        achieved = 100 * (1 - Path(candidate_path).stat().st_size / before) if before else 0
+        if achieved >= target_pct:
+            break
+
+    if best_path:
+        shutil.move(best_path, save_path)
+    else:
+        shutil.copyfile(path, save_path)
+
+    after = Path(save_path).stat().st_size
+    if after >= before:
+        shutil.copyfile(path, save_path)
+        after = before
+
+    achieved_pct = 100 * (1 - after / before) if before else 0
+    capped = achieved_pct < target_pct - 0.5
+    if not ocr_checked:
+        reason = "Legibility could not be verified on this machine (Windows' built-in OCR wasn't available), so this is a best-effort result without per-file confirmation."
+    elif stopped_by_ocr:
+        reason = f"Stopped at {achieved_pct:.0f}% because compressing further started producing text OCR could no longer read reliably."
+    elif capped:
+        reason = f"Stopped at {achieved_pct:.0f}%, the most this tool will compress a file like this even at Extreme, to stay a safe margin above the point where text becomes hard to read."
+    else:
+        reason = None
+
+    return {
+        "before_bytes": before,
+        "after_bytes": after,
+        "requested_pct": target_pct,
+        "achieved_pct": achieved_pct,
+        "capped": capped,
+        "reason": reason,
+    }
+
+
 def watermark_pdf(
     path: str, text: str, save_path: str, opacity: float = 0.25, font_size: float = 48
 ) -> None:
-    """Applied to every page — text is centered and stamped diagonally."""
+    """Applied to every page, text is centered and stamped diagonally."""
     doc = fitz.open(path)
     theta = math.radians(45)
     rot = fitz.Matrix(math.cos(theta), math.sin(theta), -math.sin(theta), math.cos(theta), 0, 0)
@@ -258,7 +421,7 @@ def watermark_pdf(
     for page in doc:
         center = (page.rect.width / 2, page.rect.height / 2)
         # insert_text's point is the baseline start, not the text's visual
-        # center, so start half the text's width to the left of center —
+        # center, so start half the text's width to the left of center,
         # otherwise the stamp reads as noticeably off-center on the page.
         origin = (center[0] - text_width / 2, center[1])
         page.insert_text(

@@ -831,6 +831,12 @@
         + '<div class="seg" data-lvl="low"><div class="t1">Low</div><div class="t2">Best quality</div></div>'
         + '<div class="seg active" data-lvl="recommended"><div class="t1">Recommended</div><div class="t2">Balanced</div></div>'
         + '<div class="seg" data-lvl="extreme"><div class="t1">Extreme</div><div class="t2">Smallest file</div></div>'
+        + '<div class="seg" data-lvl="custom"><div class="t1">Custom %</div><div class="t2">Pick a target</div></div>'
+        + '</div>'
+        + '<div class="field" id="cmpCustomField" style="display:none; margin-top:12px;">'
+        + '<label>Target size reduction</label>'
+        + '<div class="sliderrow"><input type="range" id="cmpPct" min="10" max="95" value="70"><span class="val" id="cmpPctVal">70%</span></div>'
+        + '<div class="hint">Compresses toward this target, but stops short and explains why if going further would risk making text hard to read.</div>'
         + '</div></div>';
       var level = 'recommended';
       byId('cmpSeg').querySelectorAll('.seg').forEach(function(seg){
@@ -838,14 +844,24 @@
           byId('cmpSeg').querySelectorAll('.seg').forEach(function(s){ s.classList.remove('active'); });
           seg.classList.add('active');
           level = seg.getAttribute('data-lvl');
+          byId('cmpCustomField').style.display = (level === 'custom') ? '' : 'none';
         });
       });
+      byId('cmpPct').addEventListener('input', function(){ byId('cmpPctVal').textContent = byId('cmpPct').value + '%'; });
       setupSingleFile(['cmpBox']);
       goBtn.addEventListener('click', function(){
         if(!file){ showError('Choose a file first.'); return; }
         api().pick_save_path(baseName(file.name) + '-compressed.pdf').then(function(savePath){
           if(!savePath) return;
           runGuarded(function(){
+            if(level === 'custom'){
+              var targetPct = parseInt(byId('cmpPct').value, 10);
+              return api().compress_custom(file.path, targetPct, savePath).then(function(res){
+                var achieved = Math.round(res.achieved_pct);
+                var detail = fmtBytes(res.before_bytes)+' → '+fmtBytes(res.after_bytes)+' ('+achieved+'% smaller, requested '+targetPct+'%)';
+                showSuccess(successBlock(savePath, detail) + (res.reason ? '<div style="margin-top:8px; font-size:11px; color:var(--ink-faint)">'+res.reason+'</div>' : ''));
+              });
+            }
             return api().compress(file.path, level, savePath).then(function(res){
               var pct = Math.round(100 * (1 - res.after_bytes / res.before_bytes));
               showSuccess(successBlock(savePath, fmtBytes(res.before_bytes)+' → '+fmtBytes(res.after_bytes)+' ('+pct+'% smaller)'));

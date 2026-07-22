@@ -4,12 +4,12 @@ version of Office is already installed on the machine).
 
 Two easy-to-hit COM traps, both handled below:
   1. pywebview calls each Api method on its own worker thread, and COM must
-     be explicitly initialized on every thread that touches it — otherwise
+     be explicitly initialized on every thread that touches it, otherwise
      Office throws a generic "Exception occurred" with no useful detail.
   2. win32com.client.gencache.EnsureDispatch() writes generated wrapper code
      to a cache directory that often isn't writable (or doesn't persist)
      inside a frozen PyInstaller exe. Dispatch() (late binding) sidesteps
-     that cache entirely, at the cost of not exposing named constants — so
+     that cache entirely, at the cost of not exposing named constants, so
      every Office enum value below is passed as a raw integer instead.
 """
 import os

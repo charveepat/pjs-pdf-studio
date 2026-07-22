@@ -19,12 +19,12 @@ PUA_START, PUA_END = 0xE000, 0xF8FF  # Unicode Private Use Area
 def _sanitize_text(text: str) -> str:
     """Bullet-list markers in PowerPoint-exported PDFs are usually a
     character from a symbol font (Wingdings, Webdings, etc.) rendered via
-    that font's own private glyph mapping — e.g. Wingdings code point
+    that font's own private glyph mapping, e.g. Wingdings code point
     U+F0D8 is a right-pointing arrow. Extracted as plain text and dropped
     into a normal font, those code points have no defined glyph at all and
     render as broken boxes throughout the deck (this was the "huge issue").
     Since we don't carry the original font family over (see _add_text_block),
-    there's no font install that would make the real glyph show up either —
+    there's no font install that would make the real glyph show up either,
     swapping in a plain bullet character preserves what the mark actually
     meant instead of showing a hole in the page."""
     return "".join("•" if PUA_START <= ord(c) <= PUA_END else c for c in text)
@@ -62,7 +62,7 @@ def _visual_lines(block):
     """PyMuPDF's own "lines" grouping is driven by the PDF's text-showing
     operators, not by what's visually on the same row. PDFs that position
     every word with its own explicit placement (PowerPoint's PDF export does
-    this routinely) come out of get_text("dict") as one "line" per *word* —
+    this routinely) come out of get_text("dict") as one "line" per *word*,
     same y0/y1, but each its own entry. Re-cluster spans by vertical bbox
     overlap instead, so a sentence PyMuPDF fragmented into eight one-word
     lines becomes the single flowing line it actually is on the page."""
@@ -114,7 +114,7 @@ def _add_text_block(slide, block, page_height_pt):
             text = _sanitize_text(span.get("text", ""))
             if not text:
                 continue
-            # Independently-placed words carry no space of their own — infer
+            # Independently-placed words carry no space of their own, infer
             # one from the real gap between this word and the previous.
             if j > 0:
                 gap = span["bbox"][0] - spans[j - 1]["bbox"][2]
@@ -132,7 +132,7 @@ def _add_text_block(slide, block, page_height_pt):
             g = (color_int >> 8) & 255
             b = color_int & 255
             run.font.color.rgb = RGBColor(r, g, b)
-            # Font *family* isn't preserved — PDF embeds subset fonts under
+            # Font *family* isn't preserved, PDF embeds subset fonts under
             # internal names (e.g. "ABCDEE+Calibri-Bold") that rarely match
             # an installed PowerPoint font, so guessing one in would more
             # often replace a correct-looking font with a wrong one.
@@ -167,7 +167,7 @@ def _add_page_images(slide, page, doc):
 def pdf_to_ppt(path: str, save_path: str) -> None:
     """Rebuilds each page as real, editable PowerPoint content: text blocks
     become editable text boxes (position, size, bold/italic, and color
-    preserved; font family is not — see _add_text_block), and embedded
+    preserved; font family is not, see _add_text_block), and embedded
     images become separate picture shapes rather than one flattened
     page-sized raster. Works best on simple, single-column layouts; dense
     multi-column pages may need manual tidying after conversion, the same

@@ -25,6 +25,8 @@ jobs:
           pyinstaller --onefile --windowed --name "PJS Pdf Studio" --add-data "ui;ui" `
             --collect-all pdfminer `
             --hidden-import win32timezone `
+            --collect-all winocr `
+            --collect-all winsdk `
             main.py
 
       - name: Upload exe

@@ -1,4 +1,4 @@
-"""Merge, split, rotate, and remove pages — pure PyMuPDF, no external dependency."""
+"""Merge, split, rotate, and remove pages, pure PyMuPDF, no external dependency."""
 from pathlib import Path
 
 import fitz
@@ -19,11 +19,11 @@ def split_pdf(
     ranges: list[tuple[int, int]] | None = None,
     merge: bool = False,
 ) -> list[str]:
-    """ranges is a list of 1-indexed (start, end) page pairs, inclusive — a
+    """ranges is a list of 1-indexed (start, end) page pairs, inclusive, a
     single page is just (n, n). Defaults to one output file per page.
 
     merge=False (default): each range becomes its own output file.
-    merge=True: every range is combined, in the given order, into one file —
+    merge=True: every range is combined, in the given order, into one file,
     this is how "pick individual pages visually" becomes a single export:
     the caller passes each picked page as its own (n, n) range with
     merge=True."""
