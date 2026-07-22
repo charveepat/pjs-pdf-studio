@@ -44,8 +44,8 @@ from PIL import Image
 # left alone, never upscaled.
 LEVELS = {
     "low": {"quality": 75, "target_dpi": 160},
-    "recommended": {"quality": 48, "target_dpi": 115},
-    "extreme": {"quality": 25, "target_dpi": 78},
+    "recommended": {"quality": 35, "target_dpi": 95},
+    "extreme": {"quality": 20, "target_dpi": 65},
 }
 
 
