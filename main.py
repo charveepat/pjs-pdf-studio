@@ -7,6 +7,7 @@ opens a network socket. Built for Piyush J. Shah & Co., Chartered Accountant.
 import base64
 import functools
 import logging
+import multiprocessing
 import sys
 import tempfile
 import traceback
@@ -237,4 +238,9 @@ def main():
 
 
 if __name__ == "__main__":
+    # Required for multiprocessing (used to isolate a crash-prone PyMuPDF
+    # call in compress_pdf) to work correctly in a frozen PyInstaller exe on
+    # Windows — without this, spawning a child process can re-launch the
+    # whole app instead of running the worker function.
+    multiprocessing.freeze_support()
     main()

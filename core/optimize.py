@@ -2,10 +2,14 @@
 
 Compression uses three levers, applied in this order:
   1. Font subsetting (doc.subset_fonts()) — embedded font programs are
-     trimmed down to only the glyphs actually used. On a typical
-     PowerPoint-exported PDF this alone is often a bigger win than the
-     images: a presentation can easily embed 300-600KB of full font data
-     to use a few dozen glyphs from it.
+     trimmed down to only the glyphs actually used. Run in an isolated
+     subprocess (see _subset_fonts_isolated below) because PyMuPDF's
+     subset_fonts() can segfault outright on PDFs whose fonts are already
+     subsetted — which is the normal case for most Word/PowerPoint/
+     Illustrator-generated PDFs, since those tools subset on export too.
+     A segfault is a native crash, not a Python exception, so no amount of
+     try/except in this file could ever catch it; only running it in a
+     throwaway process can contain it.
   2. Downsampling embedded images to a target resolution for how large
      they're actually drawn on the page — a 300 DPI scan is still a
      300 DPI scan at low JPEG quality unless the pixel count itself comes
@@ -18,9 +22,18 @@ Compression uses three levers, applied in this order:
 Images are replaced via Page.replace_image(), which handles the PDF object
 bookkeeping correctly; hand-editing the xref's stream/filter keys directly
 (an earlier version of this function did that) produces PDFs whose JPEG
-streams silently corrupt on save."""
+streams silently corrupt on save.
+
+Finally, the whole output is compared to the original size — a PDF that's
+already efficiently packed can legitimately have nothing left to save once
+every image is skipped, and re-saving it can add a little structural
+overhead. Rather than hand back something bigger than what came in, we
+fall back to the original bytes and report 0% saved."""
 import io
 import math
+import multiprocessing
+import shutil
+import tempfile
 from pathlib import Path
 
 import fitz
@@ -36,16 +49,50 @@ LEVELS = {
 }
 
 
+def _subset_fonts_worker(path: str, out_path: str, result_queue):
+    try:
+        doc = fitz.open(path)
+        doc.subset_fonts()
+        doc.save(out_path)
+        doc.close()
+        result_queue.put(True)
+    except Exception:
+        result_queue.put(False)
+
+
+def _subset_fonts_isolated(path: str) -> str | None:
+    """Returns a path to a font-subsetted copy, or None if subsetting failed
+    or crashed — callers should fall back to the original file either way."""
+    tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+    tmp.close()
+    queue = multiprocessing.Queue()
+    proc = multiprocessing.Process(target=_subset_fonts_worker, args=(path, tmp.name, queue))
+    proc.start()
+    proc.join(timeout=25)
+
+    ok = False
+    if proc.is_alive():
+        proc.terminate()
+        proc.join()
+    elif proc.exitcode == 0:
+        try:
+            ok = queue.get_nowait()
+        except Exception:
+            ok = False
+
+    if ok:
+        return tmp.name
+    Path(tmp.name).unlink(missing_ok=True)
+    return None
+
+
 def compress_pdf(path: str, level: str, save_path: str) -> dict:
     cfg = LEVELS.get(level, LEVELS["recommended"])
     before = Path(path).stat().st_size
 
-    doc = fitz.open(path)
-
-    try:
-        doc.subset_fonts()
-    except Exception:
-        pass  # a handful of unusual embedded fonts shouldn't sink the whole file
+    subsetted_path = _subset_fonts_isolated(path)
+    working_path = subsetted_path or path
+    doc = fitz.open(working_path)
 
     # Map each image xref to one on-page rect (in points) so we can tell how
     # many pixels it actually needs. The same image can be reused across
@@ -106,8 +153,16 @@ def compress_pdf(path: str, level: str, save_path: str) -> dict:
         compression_effort=100,
     )
     doc.close()
+    if subsetted_path:
+        Path(subsetted_path).unlink(missing_ok=True)
 
     after = Path(save_path).stat().st_size
+    if after >= before:
+        # Nothing here actually helped this particular file — never hand
+        # back something bigger than what came in.
+        shutil.copyfile(path, save_path)
+        after = before
+
     return {"before_bytes": before, "after_bytes": after}
 
 
