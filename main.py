@@ -166,6 +166,40 @@ class Api:
     def compress_custom(self, file_path, target_pct, save_path):
         return optimize.compress_pdf_custom(file_path, target_pct, save_path)
 
+    def compress_batch(self, file_paths, level, save_dir, target_pct=None):
+        """Compress several PDFs in one run, each written into save_dir as
+        <name>-compressed.pdf. One file failing (e.g. a corrupt PDF) doesn't
+        abort the rest: its error is captured and the batch continues, so a
+        long run of statements never loses the files that did compress."""
+        results = []
+        for fp in file_paths:
+            stem = Path(fp).stem
+            out = Path(save_dir) / f"{stem}-compressed.pdf"
+            n = 2
+            while out.exists():
+                out = Path(save_dir) / f"{stem}-compressed-{n}.pdf"
+                n += 1
+            try:
+                if level == "custom":
+                    res = optimize.compress_pdf_custom(fp, target_pct, str(out))
+                else:
+                    res = optimize.compress_pdf(fp, level, str(out))
+                results.append(
+                    {
+                        "name": Path(fp).name,
+                        "ok": True,
+                        "output": str(out),
+                        "before_bytes": res["before_bytes"],
+                        "after_bytes": res["after_bytes"],
+                        "achieved_pct": res.get("achieved_pct"),
+                        "reason": res.get("reason"),
+                    }
+                )
+            except Exception as e:
+                logger.exception("compress_batch item failed: %s", fp)
+                results.append({"name": Path(fp).name, "ok": False, "error": str(e) or type(e).__name__})
+        return {"results": results, "save_dir": save_dir}
+
     def ocr_available(self):
         return legibility.is_available()
 

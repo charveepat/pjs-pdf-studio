@@ -10,6 +10,8 @@ from pptx.dml.color import RGBColor
 from pptx.enum.text import MSO_ANCHOR
 from pptx.util import Emu, Pt
 
+from core import legibility
+
 EMU_PER_POINT = 12700  # exact: 914400 EMU/inch / 72 points/inch
 PDF_BOLD_FLAG = 1 << 4
 PDF_ITALIC_FLAG = 1 << 1
@@ -38,24 +40,240 @@ def pdf_to_word(path: str, save_path: str) -> None:
         cv.close()
 
 
+def _cluster_1d(values: list[float], tol: float) -> list[float]:
+    """Collapse near-equal scalars into their cluster means. Used to turn the
+    many tiny ruling-line segments a PDF draws for one visual gridline into a
+    single representative coordinate."""
+    values = sorted(values)
+    if not values:
+        return []
+    groups = [[values[0]]]
+    for v in values[1:]:
+        if v - groups[-1][-1] <= tol:
+            groups[-1].append(v)
+        else:
+            groups.append([v])
+    return [sum(g) / len(g) for g in groups]
+
+
+def _ruled_table(page):
+    """Best case: the table is drawn with real gridlines (most bank
+    statements are). Cluster every vertical and horizontal edge into a set of
+    explicit column/row lines and let pdfplumber cut the page on exactly those
+    lines. This groups a transaction whose text wraps onto three physical
+    lines back into the single bordered cell it visually occupies, which the
+    default extract_tables() cannot do (it instead reports each bordered row
+    as its own separate tiny table). Returns None when there isn't a real
+    grid to use."""
+    vedges = [e["x0"] for e in page.edges if e["orientation"] == "v"]
+    hedges = [e["top"] for e in page.edges if e["orientation"] == "h"]
+    vlines = _cluster_1d(vedges, tol=3)
+    hlines = _cluster_1d(hedges, tol=3)
+    if len(vlines) < 3 or len(hlines) < 3:
+        return None
+    settings = {
+        "vertical_strategy": "explicit",
+        "horizontal_strategy": "explicit",
+        "explicit_vertical_lines": vlines,
+        "explicit_horizontal_lines": hlines,
+        "text_x_tolerance": 1,
+        "text_y_tolerance": 1,
+    }
+    table = page.extract_table(settings) or []
+    rows = [r for r in table if any((c or "").strip() for c in r)]
+    return rows or None
+
+
+def _column_bounds(words: list[dict], page_width: float) -> list[float]:
+    """For a borderless table (no gridlines), infer column separators from the
+    vertical whitespace gaps that persist down the page. Mark every x the
+    words actually cover, then treat each wide empty band between covered
+    regions as a column boundary."""
+    if not words:
+        return [0.0, page_width]
+    width = int(page_width) + 2
+    covered = bytearray(width)
+    heights = []
+    for w in words:
+        x0 = max(0, int(w["x0"]))
+        x1 = min(width - 1, int(w["x1"]) + 1)
+        for x in range(x0, x1):
+            covered[x] = 1
+        heights.append(w["bottom"] - w["top"])
+    # A gap must be wider than roughly one character to count as a real column
+    # separator, not just the normal space between words in a sentence.
+    min_gap = max(6, (sum(heights) / len(heights)) * 0.9)
+    bounds = [0.0]
+    run_start = None
+    for x in range(width):
+        if covered[x] == 0:
+            if run_start is None:
+                run_start = x
+        else:
+            if run_start is not None and (x - run_start) >= min_gap:
+                bounds.append((run_start + x) / 2)
+            run_start = None
+    bounds.append(float(page_width))
+    return bounds
+
+
+def _grid_from_words(words: list[dict], page_width: float) -> list[list[str]]:
+    """Rebuild a table from loose positioned words (used for borderless text
+    tables and for OCR output). Words are bucketed into columns by the
+    detected boundaries and into rows by vertical position; a line that only
+    fills the widest (description) column and leaves the leading columns empty
+    is treated as a wrapped continuation and folded back into the row above."""
+    if not words:
+        return []
+    bounds = _column_bounds(words, page_width)
+    ncols = len(bounds) - 1
+
+    def col_of(x: float) -> int:
+        for i in range(ncols):
+            if bounds[i] - 0.5 <= x < bounds[i + 1] - 0.5:
+                return i
+        return ncols - 1
+
+    centers = sorted(((w["top"] + w["bottom"]) / 2, w) for w in words)
+    med_h = sorted(w["bottom"] - w["top"] for w in words)[len(words) // 2]
+    row_tol = max(2.0, med_h * 0.6)
+
+    lines: list[dict] = []
+    for yc, w in centers:
+        if lines and yc - lines[-1]["yc"] <= row_tol:
+            line = lines[-1]
+        else:
+            line = {"yc": yc, "cells": [[] for _ in range(ncols)]}
+            lines.append(line)
+        line["yc"] = yc
+        line["cells"][col_of((w["x0"] + w["x1"]) / 2)].append((w["x0"], w["text"]))
+
+    # widest column by average text length is the free-text (description) one
+    col_len = [0.0] * ncols
+    col_n = [0] * ncols
+    for ln in lines:
+        for i, cell in enumerate(ln["cells"]):
+            if cell:
+                col_len[i] += sum(len(t) for _, t in cell)
+                col_n[i] += 1
+    desc_col = max(range(ncols), key=lambda i: (col_len[i] / col_n[i]) if col_n[i] else 0)
+
+    def render(line) -> list[str]:
+        out = []
+        for cell in line["cells"]:
+            cell.sort()
+            out.append(" ".join(t for _, t in cell))
+        return out
+
+    rows: list[list[str]] = []
+    for ln in lines:
+        cells = render(ln)
+        leading_empty = all(not cells[i].strip() for i in range(ncols) if i != desc_col)
+        if rows and leading_empty and cells[desc_col].strip():
+            prev = rows[-1]
+            prev[desc_col] = (prev[desc_col] + " " + cells[desc_col]).strip()
+        elif any(c.strip() for c in cells):
+            rows.append(cells)
+    return rows
+
+
+def _ocr_words(doc, page_index: int, dpi: int = 300) -> list[dict] | None:
+    """Scanned statements (image-only PDFs with no text layer at all) can't be
+    read by any text method. On Windows we can still OCR them with the same
+    built-in engine used for compression legibility (winocr, offline, no
+    bundled binary). Renders the page to an image, OCRs it, and returns word
+    boxes in the same shape the text path uses so _grid_from_words can rebuild
+    the table. Returns None where OCR isn't available (e.g. not on Windows),
+    so the caller can flag the page instead of failing."""
+    if not legibility.is_available():
+        return None
+    import io
+
+    import winocr
+    from PIL import Image
+
+    page = doc[page_index]
+    pix = page.get_pixmap(matrix=fitz.Matrix(dpi / 72, dpi / 72))
+    img = Image.open(io.BytesIO(pix.tobytes("png")))
+    result = winocr.recognize_pil_sync(img)
+    scale = 72.0 / dpi  # OCR boxes are in image pixels; convert back to PDF points
+    words = []
+    for line in getattr(result, "lines", []) or []:
+        for w in getattr(line, "words", []) or []:
+            r = w.bounding_rect
+            words.append(
+                {
+                    "text": w.text,
+                    "x0": r.x * scale,
+                    "x1": (r.x + r.width) * scale,
+                    "top": r.y * scale,
+                    "bottom": (r.y + r.height) * scale,
+                }
+            )
+    return words
+
+
 def pdf_to_excel(path: str, save_path: str) -> dict:
+    """Turn each page's table into a worksheet, choosing the best strategy per
+    page: gridline-ruled tables first (one row per transaction even when text
+    wraps), then a positional word-grid for borderless text tables, and a
+    Windows OCR fallback for scanned image-only pages. Falls back to
+    pdfplumber's default detection if the smarter paths find nothing, so
+    simple PDFs that already converted keep working."""
     import pdfplumber
 
     wb = Workbook()
     wb.remove(wb.active)
     table_count = 0
-    with pdfplumber.open(path) as pdf:
-        for i, page in enumerate(pdf.pages):
-            for t_idx, table in enumerate(page.extract_tables()):
+    scanned_pages: list[int] = []
+
+    doc = fitz.open(path)
+    try:
+        with pdfplumber.open(path) as pdf:
+            for i, page in enumerate(pdf.pages):
+                words = page.extract_words()
+                if not words:
+                    # No text layer on this page: it's a scan. Try OCR.
+                    ocr = _ocr_words(doc, i)
+                    if ocr:
+                        rows = _grid_from_words(ocr, page.width)
+                    else:
+                        scanned_pages.append(i + 1)
+                        continue
+                else:
+                    rows = _ruled_table(page)
+                    if rows is None:
+                        rows = _grid_from_words(
+                            [
+                                {"x0": w["x0"], "x1": w["x1"], "top": w["top"], "bottom": w["bottom"], "text": w["text"]}
+                                for w in words
+                            ],
+                            page.width,
+                        )
+                    if not rows:
+                        default = page.extract_tables()
+                        rows = [r for t in default for r in t if any((c or "").strip() for c in r)]
+                if not rows:
+                    continue
                 table_count += 1
-                name = f"Page{i + 1}" if t_idx == 0 else f"Page{i + 1}_{t_idx + 1}"
-                ws = wb.create_sheet(title=name[:31])
-                for row in table:
+                ws = wb.create_sheet(title=f"Page{i + 1}"[:31])
+                for row in rows:
                     ws.append(["" if c is None else c for c in row])
+    finally:
+        doc.close()
+
     if not wb.sheetnames:
-        wb.create_sheet(title="Sheet1")["A1"] = "No tables were detected in this PDF."
+        note = wb.create_sheet(title="Sheet1")
+        if scanned_pages:
+            note["A1"] = (
+                "This PDF is a scanned image with no text to extract. Converting it "
+                "to Excel needs the Windows OCR engine, which is only available when "
+                "running on Windows."
+            )
+        else:
+            note["A1"] = "No tables were detected in this PDF."
     wb.save(save_path)
-    return {"tables_found": table_count}
+    return {"tables_found": table_count, "scanned_pages": scanned_pages}
 
 
 def _visual_lines(block):

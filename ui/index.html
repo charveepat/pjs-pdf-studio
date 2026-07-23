@@ -252,6 +252,14 @@
   .filelist .row .nm{ flex:1; font-weight:600; }
   .filelist .row button{ border:0; background:none; color:var(--ink-faint); cursor:pointer; font-size:11px; }
   .filelist .row button:hover{ color:var(--accent); }
+  .filelist .row .drag{ cursor:grab; color:var(--ink-faint); font-size:13px; line-height:1; letter-spacing:-2px; user-select:none; }
+  .filelist .row.dragging{ opacity:0.45; }
+  .filelist .row.dropbefore{ box-shadow:inset 0 2px 0 0 var(--accent); }
+  .filelist .row.dropafter{ box-shadow:inset 0 -2px 0 0 var(--accent); }
+  .filelist .row .ord{ display:flex; gap:2px; }
+  .filelist .row .ord button{ font-size:10px; padding:1px 3px; line-height:1; color:var(--ink-soft); }
+  .filelist .row .ord button:disabled{ opacity:0.28; cursor:default; }
+  .filelist .row .ord button:not(:disabled):hover{ color:var(--accent); }
 
   .statusbar{ flex:none; display:flex; align-items:center; gap:16px; padding:7px 16px; border-top:1px solid var(--line); background:var(--cabinet); font-family:var(--font-mono); font-size:10.5px; color:var(--ink-faint); }
   .statusbar .dot{ width:6px;height:6px;border-radius:50%; background:var(--good); box-shadow:0 0 0 3px color-mix(in srgb, var(--good) 22%, transparent); }
@@ -358,7 +366,7 @@
     {id:'pdf-to-ppt', cat:'from-pdf', catLabel:'Convert from PDF', title:'PDF to PowerPoint', desc:'Rebuild a deck with editable text boxes, one slide per page.', icon:ICONS.pdf2p, badge:BADGE.p, tint:'var(--pdf-tint)', kind:'pdf-to-ppt', accept:'.pdf', out:'pptx'},
     {id:'pdf-to-img', cat:'from-pdf', catLabel:'Convert from PDF', title:'PDF to Images', desc:'Export each page as a separate PNG.', icon:ICONS.pdf2img, badge:BADGE.img, tint:'var(--pdf-tint)', kind:'pdf-to-images', accept:'.pdf', out:'png'},
 
-    {id:'compress', cat:'optimize', catLabel:'Optimize', title:'Compress PDF', desc:'Shrink file size by re-encoding images inside the PDF.', icon:ICONS.compress, tint:'var(--pdf-tint)', kind:'compress', accept:'.pdf', out:'pdf'},
+    {id:'compress', cat:'optimize', catLabel:'Optimize', title:'Compress PDF', desc:'Shrink one or several PDFs at once by re-encoding the images inside them.', icon:ICONS.compress, tint:'var(--pdf-tint)', kind:'compress', accept:'.pdf', out:'pdf'},
     {id:'watermark', cat:'optimize', catLabel:'Optimize', title:'Add Watermark', desc:'Stamp text diagonally across every page.', icon:ICONS.watermark, tint:'var(--pdf-tint)', kind:'watermark', accept:'.pdf', out:'pdf'},
 
     {id:'redact', cat:'security', catLabel:'Security', title:'Redact PDF', desc:'Black out sensitive text, by hand or auto-detected.', icon:ICONS.redact, tint:'var(--pdf-tint)', kind:'redact', accept:'.pdf', out:'pdf'},
@@ -626,23 +634,74 @@
           });
         });
       });
+      function moveFile(from, to){
+        if(to < 0 || to >= files.length || from === to) return;
+        var moved = files.splice(from, 1)[0];
+        files.splice(to, 0, moved);
+        renderFileList();
+      }
       function renderFileList(){
+        var reorderHint = files.length > 1
+          ? '<div class="hint" style="margin-bottom:8px">Files combine top to bottom. Drag a row, or use the arrows, to change the order.</div>'
+          : '';
         var rows = files.map(function(f, i){
-          return '<div class="row"><span class="n">'+(i+1)+'</span><span class="nm">'+f.name+'</span><span class="fsize">'+fmtBytes(f.size)+'</span><button data-i="'+i+'">Remove</button></div>';
+          return '<div class="row" draggable="true" data-idx="'+i+'">'
+            + '<span class="drag" title="Drag to reorder">&#8942;&#8942;</span>'
+            + '<span class="n">'+(i+1)+'</span>'
+            + '<span class="nm">'+f.name+'</span>'
+            + '<span class="fsize">'+fmtBytes(f.size)+'</span>'
+            + '<span class="ord"><button class="mvup" data-i="'+i+'" title="Move up"'+(i===0?' disabled':'')+'>&#9650;</button>'
+            + '<button class="mvdown" data-i="'+i+'" title="Move down"'+(i===files.length-1?' disabled':'')+'>&#9660;</button></span>'
+            + '<button class="rm" data-i="'+i+'">Remove</button></div>';
         }).join('');
         var dzLabel = files.length ? 'Drop more files, or click to browse' : (t.kind==='merge' ? 'Drop PDFs here, or click to choose' : 'Drop images here, or click to choose');
-        body.innerHTML = (files.length ? '<div class="filelist">'+rows+'</div>' : '') + dropzoneHtml(t, dzLabel);
-        body.querySelectorAll('.filelist button').forEach(function(btn){
+        body.innerHTML = (files.length ? reorderHint + '<div class="filelist">'+rows+'</div>' : '') + dropzoneHtml(t, dzLabel);
+        function refresh(){
+          goBtn.disabled = files.length < (t.kind==='merge' ? 2 : 1);
+          renderFileList();
+        }
+        body.querySelectorAll('.filelist .rm').forEach(function(btn){
           btn.addEventListener('click', function(){
             files.splice(parseInt(btn.getAttribute('data-i'),10), 1);
-            goBtn.disabled = files.length < (t.kind==='merge' ? 2 : 1);
-            renderFileList();
+            refresh();
+          });
+        });
+        body.querySelectorAll('.filelist .mvup').forEach(function(btn){
+          btn.addEventListener('click', function(){ var i = parseInt(btn.getAttribute('data-i'),10); moveFile(i, i-1); });
+        });
+        body.querySelectorAll('.filelist .mvdown').forEach(function(btn){
+          btn.addEventListener('click', function(){ var i = parseInt(btn.getAttribute('data-i'),10); moveFile(i, i+1); });
+        });
+        var dragFrom = null;
+        body.querySelectorAll('.filelist .row').forEach(function(rowEl){
+          rowEl.addEventListener('dragstart', function(e){
+            dragFrom = parseInt(rowEl.getAttribute('data-idx'),10);
+            rowEl.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+          });
+          rowEl.addEventListener('dragend', function(){
+            rowEl.classList.remove('dragging');
+            body.querySelectorAll('.filelist .row').forEach(function(r){ r.classList.remove('dropbefore','dropafter'); });
+          });
+          rowEl.addEventListener('dragover', function(e){
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            var over = parseInt(rowEl.getAttribute('data-idx'),10);
+            body.querySelectorAll('.filelist .row').forEach(function(r){ r.classList.remove('dropbefore','dropafter'); });
+            if(dragFrom === null || over === dragFrom) return;
+            rowEl.classList.add(over > dragFrom ? 'dropafter' : 'dropbefore');
+          });
+          rowEl.addEventListener('drop', function(e){
+            e.preventDefault();
+            if(dragFrom === null) return;
+            var to = parseInt(rowEl.getAttribute('data-idx'),10);
+            moveFile(dragFrom, to);
+            dragFrom = null;
           });
         });
         wireMultiFileDrop(byId('wfDrop'), t.accept, function(picked){
           files = files.concat(picked);
-          goBtn.disabled = files.length < (t.kind==='merge' ? 2 : 1);
-          renderFileList();
+          refresh();
         });
       }
       return;
@@ -824,9 +883,11 @@
       return;
     }
 
-    // ---- compress ----
+    // ---- compress (one file, or several in one batch) ----
     if(t.kind === 'compress'){
-      body.innerHTML = '<div id="wfFileSlot"></div><div class="panel-box" style="display:none" id="cmpBox"><h4>Compression level</h4>'
+      var cmpFiles = [];
+      var level = 'recommended';
+      body.innerHTML = '<div id="cmpFiles"></div><div class="panel-box" style="display:none" id="cmpBox"><h4>Compression level</h4>'
         + '<div class="segmented" id="cmpSeg">'
         + '<div class="seg" data-lvl="low"><div class="t1">Low</div><div class="t2">Best quality</div></div>'
         + '<div class="seg active" data-lvl="recommended"><div class="t1">Recommended</div><div class="t2">Balanced</div></div>'
@@ -836,9 +897,8 @@
         + '<div class="field" id="cmpCustomField" style="display:none; margin-top:12px;">'
         + '<label>Target size reduction</label>'
         + '<div class="sliderrow"><input type="range" id="cmpPct" min="10" max="95" value="70"><span class="val" id="cmpPctVal">70%</span></div>'
-        + '<div class="hint">Compresses toward this target, but stops short and explains why if going further would risk making text hard to read.</div>'
+        + '<div class="hint">Compresses toward this target, but stops short and explains why if going further would risk making text hard to read. Applied to every file in the list.</div>'
         + '</div></div>';
-      var level = 'recommended';
       byId('cmpSeg').querySelectorAll('.seg').forEach(function(seg){
         seg.addEventListener('click', function(){
           byId('cmpSeg').querySelectorAll('.seg').forEach(function(s){ s.classList.remove('active'); });
@@ -848,23 +908,71 @@
         });
       });
       byId('cmpPct').addEventListener('input', function(){ byId('cmpPctVal').textContent = byId('cmpPct').value + '%'; });
-      setupSingleFile(['cmpBox']);
+
+      function renderCmpFiles(){
+        var slot = byId('cmpFiles');
+        var rows = cmpFiles.map(function(f, i){
+          return '<div class="row"><span class="n">'+(i+1)+'</span><span class="nm">'+f.name+'</span><span class="fsize">'+fmtBytes(f.size)+'</span><button class="rm" data-i="'+i+'">Remove</button></div>';
+        }).join('');
+        var dzLabel = cmpFiles.length ? 'Drop more PDFs, or click to browse' : 'Drop one or more PDFs here, or click to choose';
+        slot.innerHTML = (cmpFiles.length ? '<div class="filelist">'+rows+'</div>' : '') + dropzoneHtml(t, dzLabel);
+        byId('cmpBox').style.display = cmpFiles.length ? '' : 'none';
+        goBtn.disabled = cmpFiles.length === 0;
+        slot.querySelectorAll('.filelist .rm').forEach(function(btn){
+          btn.addEventListener('click', function(){ cmpFiles.splice(parseInt(btn.getAttribute('data-i'),10), 1); renderCmpFiles(); });
+        });
+        wireMultiFileDrop(byId('wfDrop'), t.accept, function(picked){ cmpFiles = cmpFiles.concat(picked); renderCmpFiles(); });
+      }
+      renderCmpFiles();
+
+      function reasonHtml(reason){ return '<div style="margin-top:8px; font-size:11px; color:var(--ink-faint)">'+reason+'</div>'; }
+      function batchSummary(res){
+        var oks = res.results.filter(function(r){ return r.ok; });
+        var totalBefore = oks.reduce(function(a, r){ return a + r.before_bytes; }, 0);
+        var totalAfter = oks.reduce(function(a, r){ return a + r.after_bytes; }, 0);
+        var pct = totalBefore ? Math.round(100 * (1 - totalAfter / totalBefore)) : 0;
+        var head = '<div class="s1"><svg viewBox="0 0 20 20" fill="none"><path d="M4 10.5l4 4L16 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Saved</div>'
+          + '<div class="path">'+oks.length+' of '+res.results.length+' compressed into '+res.save_dir+'</div>';
+        var lines = res.results.map(function(r){
+          if(r.ok){
+            var p = Math.round(100 * (1 - r.after_bytes / r.before_bytes));
+            return '<div>'+r.name+' &middot; '+fmtBytes(r.before_bytes)+' &rarr; '+fmtBytes(r.after_bytes)+' ('+p+'% smaller)'+(r.reason ? ' &middot; '+r.reason : '')+'</div>';
+          }
+          return '<div style="color:#b3261e">'+r.name+' &middot; failed: '+r.error+'</div>';
+        }).join('');
+        var totalLine = oks.length > 1 ? '<div style="margin-top:6px; font-weight:600">Total: '+fmtBytes(totalBefore)+' &rarr; '+fmtBytes(totalAfter)+' ('+pct+'% smaller)</div>' : '';
+        return head + '<div style="margin-top:8px; font-size:11.5px; color:var(--ink-soft); display:flex; flex-direction:column; gap:3px">'+lines+totalLine+'</div>';
+      }
+
       goBtn.addEventListener('click', function(){
-        if(!file){ showError('Choose a file first.'); return; }
-        api().pick_save_path(baseName(file.name) + '-compressed.pdf').then(function(savePath){
-          if(!savePath) return;
-          runGuarded(function(){
-            if(level === 'custom'){
-              var targetPct = parseInt(byId('cmpPct').value, 10);
-              return api().compress_custom(file.path, targetPct, savePath).then(function(res){
-                var achieved = Math.round(res.achieved_pct);
-                var detail = fmtBytes(res.before_bytes)+' → '+fmtBytes(res.after_bytes)+' ('+achieved+'% smaller, requested '+targetPct+'%)';
-                showSuccess(successBlock(savePath, detail) + (res.reason ? '<div style="margin-top:8px; font-size:11px; color:var(--ink-faint)">'+res.reason+'</div>' : ''));
+        if(!cmpFiles.length){ showError('Choose at least one PDF.'); return; }
+        var targetPct = parseInt(byId('cmpPct').value, 10);
+        if(cmpFiles.length === 1){
+          var f0 = cmpFiles[0];
+          api().pick_save_path(baseName(f0.name) + '-compressed.pdf').then(function(savePath){
+            if(!savePath) return;
+            runGuarded(function(){
+              if(level === 'custom'){
+                return api().compress_custom(f0.path, targetPct, savePath).then(function(res){
+                  var achieved = Math.round(res.achieved_pct);
+                  var detail = fmtBytes(res.before_bytes)+' &rarr; '+fmtBytes(res.after_bytes)+' ('+achieved+'% smaller, requested '+targetPct+'%)';
+                  showSuccess(successBlock(savePath, detail) + (res.reason ? reasonHtml(res.reason) : ''));
+                });
+              }
+              return api().compress(f0.path, level, savePath).then(function(res){
+                var pct = Math.round(100 * (1 - res.after_bytes / res.before_bytes));
+                showSuccess(successBlock(savePath, fmtBytes(res.before_bytes)+' &rarr; '+fmtBytes(res.after_bytes)+' ('+pct+'% smaller)'));
               });
-            }
-            return api().compress(file.path, level, savePath).then(function(res){
-              var pct = Math.round(100 * (1 - res.after_bytes / res.before_bytes));
-              showSuccess(successBlock(savePath, fmtBytes(res.before_bytes)+' → '+fmtBytes(res.after_bytes)+' ('+pct+'% smaller)'));
+            });
+          });
+          return;
+        }
+        api().pick_save_dir().then(function(dir){
+          if(!dir) return;
+          runGuarded(function(){
+            var paths = cmpFiles.map(function(f){ return f.path; });
+            return api().compress_batch(paths, level, dir, targetPct).then(function(res){
+              showSuccess(batchSummary(res));
             });
           });
         });
