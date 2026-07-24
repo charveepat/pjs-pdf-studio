@@ -261,6 +261,28 @@
   .filelist .row .ord button:disabled{ opacity:0.28; cursor:default; }
   .filelist .row .ord button:not(:disabled):hover{ color:var(--accent); }
 
+  /* password prompt for locked PDFs */
+  .pw-overlay{ position:fixed; inset:0; background:rgba(20,28,38,0.45); display:flex; align-items:center; justify-content:center; z-index:1000; }
+  .pw-box{ background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:20px 22px; width:min(380px, 90vw); box-shadow:0 18px 50px rgba(0,0,0,0.28); }
+  .pw-title{ font-weight:700; font-size:14px; color:var(--ink); }
+  .pw-sub{ font-family:var(--font-mono); font-size:11px; color:var(--ink-soft); margin-top:3px; word-break:break-all; }
+  .pw-err{ color:#b3261e; font-size:11.5px; margin-top:8px; }
+  .pw-input{ width:100%; margin-top:12px; padding:9px 11px; border:1.5px solid var(--line); border-radius:8px; font-size:13px; background:var(--cabinet); color:var(--ink); box-sizing:border-box; }
+  .pw-input:focus{ outline:none; border-color:var(--accent); }
+  .pw-actions{ display:flex; justify-content:flex-end; gap:8px; margin-top:14px; }
+
+  /* live progress bar for compression */
+  .wf-progress{ margin-top:12px; }
+  .wf-progress-track{ height:9px; border-radius:6px; background:var(--line); overflow:hidden; }
+  .wf-progress-fill{ height:100%; width:0%; border-radius:6px; background:var(--accent); transition:width 0.25s ease; }
+  .wf-progress-meta{ display:flex; justify-content:space-between; gap:12px; margin-top:6px; font-size:11.5px; color:var(--ink-soft); }
+  .wf-progress-meta .pct{ font-family:var(--font-mono); font-weight:600; color:var(--ink); }
+  .wf-progress-label{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+  .field .prefixrow{ display:flex; align-items:center; gap:8px; }
+  .field .prefixrow input{ width:88px; padding:7px 9px; border:1.5px solid var(--line); border-radius:7px; font-size:12px; background:var(--cabinet); color:var(--ink); }
+  .field .prefixrow input:focus{ outline:none; border-color:var(--accent); }
+
   .statusbar{ flex:none; display:flex; align-items:center; gap:16px; padding:7px 16px; border-top:1px solid var(--line); background:var(--cabinet); font-family:var(--font-mono); font-size:10.5px; color:var(--ink-faint); }
   .statusbar .dot{ width:6px;height:6px;border-radius:50%; background:var(--good); box-shadow:0 0 0 3px color-mix(in srgb, var(--good) 22%, transparent); }
   .statusbar .net{ margin-left:auto; }
@@ -472,6 +494,8 @@
       + '<div><div class="crumb">'+t.catLabel+'</div><h1>'+t.title+'</h1></div></div>'
       + '<div id="wfBody"></div>'
       + '<div class="actions"><button class="btn btn-primary" id="wfGo" disabled><span class="spinner"></span><span class="btn-label">'+actionLabel(t)+'</span></button></div>'
+      + '<div class="wf-progress" id="wfProgress" style="display:none"><div class="wf-progress-track"><div class="wf-progress-fill" id="wfProgressFill"></div></div>'
+      + '<div class="wf-progress-meta"><span class="wf-progress-label" id="wfProgressLabel"></span><span class="pct" id="wfProgressPct">0%</span></div></div>'
       + '<div class="success" id="wfSuccess"></div>'
       + '<div class="error" id="wfError"></div>';
   }
@@ -521,6 +545,35 @@
       Promise.resolve().then(fn).catch(function(err){
         showError((err && err.message) ? err.message : String(err));
       }).finally(function(){
+        goBtn.classList.remove('loading');
+        goBtn.disabled = false;
+      });
+    }
+    // Like runGuarded, but also shows a live progress bar driven by polling
+    // the backend's get_progress() while the job runs. Used for compression so
+    // the office can watch it work instead of staring at a spinner.
+    function runWithProgress(fn){
+      var bar = byId('wfProgress');
+      var fill = byId('wfProgressFill');
+      var pctEl = byId('wfProgressPct');
+      var labelEl = byId('wfProgressLabel');
+      if(bar){ bar.style.display = ''; fill.style.width = '0%'; pctEl.textContent = '0%'; labelEl.textContent = 'Starting...'; }
+      var timer = setInterval(function(){
+        Promise.resolve(api().get_progress()).then(function(p){
+          if(!p || !bar) return;
+          fill.style.width = p.pct + '%';
+          pctEl.textContent = p.pct + '%';
+          if(p.label) labelEl.textContent = p.label;
+        }).catch(function(){});
+      }, 300);
+      function stop(){ clearInterval(timer); if(bar){ fill.style.width = '100%'; pctEl.textContent = '100%'; setTimeout(function(){ bar.style.display = 'none'; }, 500); } }
+      clearError();
+      goBtn.classList.add('loading');
+      goBtn.disabled = true;
+      Promise.resolve().then(fn).catch(function(err){
+        showError((err && err.message) ? err.message : String(err));
+      }).finally(function(){
+        stop();
         goBtn.classList.remove('loading');
         goBtn.disabled = false;
       });
@@ -898,7 +951,10 @@
         + '<label>Target size reduction</label>'
         + '<div class="sliderrow"><input type="range" id="cmpPct" min="10" max="95" value="70"><span class="val" id="cmpPctVal">70%</span></div>'
         + '<div class="hint">Compresses toward this target, but stops short and explains why if going further would risk making text hard to read. Applied to every file in the list.</div>'
-        + '</div></div>';
+        + '</div>'
+        + '<div class="field" id="cmpPrefixField" style="display:none; margin-top:14px;"><label>Filename prefix for the batch (optional, up to 4 characters)</label>'
+        + '<div class="prefixrow"><input type="text" id="cmpPrefix" maxlength="4" placeholder="e.g. Q1"><span class="hint">Files save as prefix_name_compressed.pdf into the folder you pick.</span></div></div>'
+        + '</div>';
       byId('cmpSeg').querySelectorAll('.seg').forEach(function(seg){
         seg.addEventListener('click', function(){
           byId('cmpSeg').querySelectorAll('.seg').forEach(function(s){ s.classList.remove('active'); });
@@ -917,6 +973,7 @@
         var dzLabel = cmpFiles.length ? 'Drop more PDFs, or click to browse' : 'Drop one or more PDFs here, or click to choose';
         slot.innerHTML = (cmpFiles.length ? '<div class="filelist">'+rows+'</div>' : '') + dropzoneHtml(t, dzLabel);
         byId('cmpBox').style.display = cmpFiles.length ? '' : 'none';
+        byId('cmpPrefixField').style.display = cmpFiles.length > 1 ? '' : 'none';
         goBtn.disabled = cmpFiles.length === 0;
         slot.querySelectorAll('.filelist .rm').forEach(function(btn){
           btn.addEventListener('click', function(){ cmpFiles.splice(parseInt(btn.getAttribute('data-i'),10), 1); renderCmpFiles(); });
@@ -951,7 +1008,7 @@
           var f0 = cmpFiles[0];
           api().pick_save_path(baseName(f0.name) + '-compressed.pdf').then(function(savePath){
             if(!savePath) return;
-            runGuarded(function(){
+            runWithProgress(function(){
               if(level === 'custom'){
                 return api().compress_custom(f0.path, targetPct, savePath).then(function(res){
                   var achieved = Math.round(res.achieved_pct);
@@ -967,11 +1024,12 @@
           });
           return;
         }
+        var prefix = (byId('cmpPrefix') && byId('cmpPrefix').value || '').trim();
         api().pick_save_dir().then(function(dir){
           if(!dir) return;
-          runGuarded(function(){
+          runWithProgress(function(){
             var paths = cmpFiles.map(function(f){ return f.path; });
-            return api().compress_batch(paths, level, dir, targetPct).then(function(res){
+            return api().compress_batch(paths, level, dir, targetPct, prefix).then(function(res){
               showSuccess(batchSummary(res));
             });
           });
@@ -1202,11 +1260,61 @@
     });
   }
 
+  // ---- password-protected PDFs ----
+  // Any file added to any tool passes through here. A locked PDF is unlocked
+  // once (into a decrypted temp) and every tool then works on it normally.
+  function askPassword(fileName, wrong){
+    return new Promise(function(resolve){
+      var ov = document.createElement('div');
+      ov.className = 'pw-overlay';
+      ov.innerHTML = '<div class="pw-box">'
+        + '<div class="pw-title">This PDF is password protected</div>'
+        + '<div class="pw-sub">'+fileName+'</div>'
+        + (wrong ? '<div class="pw-err">Incorrect password, try again.</div>' : '')
+        + '<input type="password" class="pw-input" id="pwInput" placeholder="Enter password" autocomplete="off">'
+        + '<div class="pw-actions"><button class="btn btn-ghost" id="pwCancel">Cancel</button><button class="btn btn-primary" id="pwOk"><span class="btn-label">Unlock</span></button></div>'
+        + '</div>';
+      document.body.appendChild(ov);
+      var input = ov.querySelector('#pwInput');
+      input.focus();
+      function done(val){ ov.remove(); resolve(val); }
+      ov.querySelector('#pwCancel').addEventListener('click', function(){ done(null); });
+      ov.querySelector('#pwOk').addEventListener('click', function(){ done(input.value); });
+      input.addEventListener('keydown', function(e){
+        if(e.key === 'Enter') done(input.value);
+        if(e.key === 'Escape') done(null);
+      });
+    });
+  }
+  function unlockIfNeeded(fileInfo){
+    if(!fileInfo || !/\.pdf$/i.test(fileInfo.name || '')) return Promise.resolve(fileInfo);
+    return Promise.resolve(api().is_encrypted(fileInfo.path)).then(function(enc){
+      if(!enc) return fileInfo;
+      function attempt(wrong){
+        return askPassword(fileInfo.name, wrong).then(function(pw){
+          if(pw === null) return null;  // cancelled: drop this file
+          return api().unlock(fileInfo.path, pw).catch(function(){ return attempt(true); });
+        });
+      }
+      return attempt(false);
+    }).catch(function(){ return fileInfo; });  // if the check itself fails, don't block
+  }
+  function resolveFiles(list){
+    // Unlock any locked PDFs in order; drop the ones the user cancelled out of.
+    var out = [];
+    return list.reduce(function(chain, f){
+      return chain.then(function(){
+        return unlockIfNeeded(f).then(function(u){ if(u) out.push(u); });
+      });
+    }, Promise.resolve()).then(function(){ return out; });
+  }
+
   function wireSingleFileDrop(t, onFile){
     var drop = byId('wfDrop');
     if(!drop) return;
+    function handle(f){ if(f) unlockIfNeeded(f).then(function(u){ if(u) onFile(u); }); }
     drop.addEventListener('click', function(){
-      api().pick_open_file(t.accept).then(function(f){ if(f) onFile(f); });
+      api().pick_open_file(t.accept).then(handle);
     });
     drop.addEventListener('keydown', function(e){ if(e.key==='Enter') drop.click(); });
     ['dragenter','dragover'].forEach(function(ev){ drop.addEventListener(ev, function(e){ e.preventDefault(); drop.classList.add('drag'); }); });
@@ -1216,13 +1324,15 @@
       drop.classList.remove('drag');
       var f = e.dataTransfer.files && e.dataTransfer.files[0];
       if(!f) return;
-      fileToBase64(f).then(function(b64){ return api().receive_dropped_file(f.name, b64); }).then(onFile);
+      fileToBase64(f).then(function(b64){ return api().receive_dropped_file(f.name, b64); }).then(handle);
     });
   }
 
   function wireMultiFileDrop(drop, accept, onFiles){
     drop.addEventListener('click', function(){
-      api().pick_open_files(accept).then(function(picked){ if(picked && picked.length) onFiles(picked); });
+      api().pick_open_files(accept).then(function(picked){
+        if(picked && picked.length) resolveFiles(picked).then(function(list){ if(list.length) onFiles(list); });
+      });
     });
     drop.addEventListener('keydown', function(e){ if(e.key==='Enter') drop.click(); });
     ['dragenter','dragover'].forEach(function(ev){ drop.addEventListener(ev, function(e){ e.preventDefault(); drop.classList.add('drag'); }); });
@@ -1234,7 +1344,7 @@
       if(!list || !list.length) return;
       Promise.all(Array.prototype.map.call(list, function(f){
         return fileToBase64(f).then(function(b64){ return api().receive_dropped_file(f.name, b64); });
-      })).then(onFiles);
+      })).then(function(infos){ return resolveFiles(infos); }).then(function(resolved){ if(resolved.length) onFiles(resolved); });
     });
   }
 

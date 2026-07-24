@@ -1,7 +1,36 @@
 """Redaction (auto-detect + apply) and password protection."""
 import re
+import tempfile
 
 import fitz
+
+
+def is_encrypted(path: str) -> bool:
+    """True if the PDF needs a password to open. Every tool opens files the
+    same way, so this one check at the point a file is added lets the UI ask
+    for the password once and hand every tool a decrypted copy."""
+    doc = fitz.open(path)
+    needs = bool(doc.needs_pass)
+    doc.close()
+    return needs
+
+
+def decrypt_to_temp(path: str, password: str) -> str:
+    """Authenticate a locked PDF and write a decrypted copy to a temp file,
+    returned for the rest of the app to use exactly like any other file.
+    Raises ValueError on a wrong password. A file that isn't actually
+    encrypted is just copied through unchanged."""
+    doc = fitz.open(path)
+    if doc.needs_pass and not doc.authenticate(password):
+        doc.close()
+        raise ValueError("Incorrect password for this PDF.")
+    tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+    tmp.close()
+    # PDF_ENCRYPT_NONE strips the encryption; the default (KEEP) would carry
+    # the password protection into the copy and defeat the whole point.
+    doc.save(tmp.name, encryption=fitz.PDF_ENCRYPT_NONE)
+    doc.close()
+    return tmp.name
 
 PATTERNS = {
     "pan": re.compile(r"\b[A-Z]{5}[0-9]{4}[A-Z]\b"),

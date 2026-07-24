@@ -93,6 +93,20 @@ def _file_info(path: str) -> dict:
 class Api:
     def __init__(self):
         self.window = None  # attached after window creation, needed for dialogs
+        # Live progress for long operations (compression). The UI polls
+        # get_progress() on a timer while a job runs; pywebview dispatches each
+        # call on its own thread, so the worker can update this dict while the
+        # poller reads it. A plain dict read/write under the GIL is enough here.
+        self._progress = {"active": False, "pct": 0, "label": ""}
+
+    def _set_progress(self, pct, label):
+        self._progress = {"active": True, "pct": max(0, min(100, int(pct))), "label": label}
+
+    def _clear_progress(self):
+        self._progress = {"active": False, "pct": 100, "label": ""}
+
+    def get_progress(self):
+        return dict(self._progress)
 
     # ---------- drag-and-drop ----------
     def receive_dropped_file(self, name: str, data_b64: str):
@@ -110,6 +124,19 @@ class Api:
         info["name"] = safe_name  # show the real filename, not the uuid-prefixed temp one
         return info
 
+    # ---------- password-protected input files ----------
+    def is_encrypted(self, file_path):
+        return security.is_encrypted(file_path)
+
+    def unlock(self, file_path, password):
+        """Decrypt a locked PDF into a temp file and return it as a normal
+        file-info dict, so every downstream tool works on it without any
+        password handling of its own."""
+        decrypted = security.decrypt_to_temp(file_path, password)
+        info = _file_info(decrypted)
+        info["name"] = _file_info(file_path)["name"]  # keep the user's real filename
+        return info
+
     # ---------- file / save dialogs (native OS dialogs, no fake modal) ----------
     def pick_open_file(self, accept: str = ""):
         result = self.window.create_file_dialog(webview.OPEN_DIALOG, file_types=_file_types(accept))
@@ -122,14 +149,23 @@ class Api:
         return [_file_info(p) for p in result] if result else []
 
     def pick_save_path(self, suggested_name: str):
+        ext = Path(suggested_name).suffix  # e.g. ".xlsx"
+        label = FILE_TYPE_LABELS.get(ext.lower(), "All files (*.*)")
         result = self.window.create_file_dialog(
             webview.SAVE_DIALOG,
             directory=str(paths.default_output_dir()),
             save_filename=suggested_name,
+            file_types=(label, "All files (*.*)"),
         )
         if not result:
             return None
-        return result if isinstance(result, str) else result[0]
+        path = result if isinstance(result, str) else result[0]
+        # The native save dialog can hand back a path with no extension (its
+        # "Save as type" was All Files), which then saves e.g. an .xlsx with no
+        # extension and won't open in Excel. Force the intended extension on.
+        if ext and not path.lower().endswith(ext.lower()):
+            path += ext
+        return path
 
     def pick_save_dir(self):
         result = self.window.create_file_dialog(
@@ -161,43 +197,69 @@ class Api:
 
     # ---------- optimize ----------
     def compress(self, file_path, level, save_path):
-        return optimize.compress_pdf(file_path, level, save_path)
+        self._set_progress(0, "Compressing " + Path(file_path).name)
+        try:
+            return optimize.compress_pdf(
+                file_path, level, save_path,
+                progress=lambda f: self._set_progress(f * 100, "Compressing " + Path(file_path).name),
+            )
+        finally:
+            self._clear_progress()
 
     def compress_custom(self, file_path, target_pct, save_path):
-        return optimize.compress_pdf_custom(file_path, target_pct, save_path)
+        # The custom ladder runs several compression passes with OCR checks, so
+        # a true per-page percent isn't meaningful; show a moving indeterminate
+        # state instead of a stuck 0.
+        self._set_progress(5, "Compressing " + Path(file_path).name + " (custom target)")
+        try:
+            return optimize.compress_pdf_custom(file_path, target_pct, save_path)
+        finally:
+            self._clear_progress()
 
-    def compress_batch(self, file_paths, level, save_dir, target_pct=None):
+    def compress_batch(self, file_paths, level, save_dir, target_pct=None, prefix=""):
         """Compress several PDFs in one run, each written into save_dir as
-        <name>-compressed.pdf. One file failing (e.g. a corrupt PDF) doesn't
-        abort the rest: its error is captured and the batch continues, so a
-        long run of statements never loses the files that did compress."""
+        <prefix>_<name>_compressed.pdf (prefix optional, capped at 4 chars).
+        One file failing (e.g. a corrupt PDF) doesn't abort the rest: its error
+        is captured and the batch continues, so a long run of statements never
+        loses the files that did compress."""
+        prefix = (prefix or "").strip()[:4]
         results = []
-        for fp in file_paths:
-            stem = Path(fp).stem
-            out = Path(save_dir) / f"{stem}-compressed.pdf"
-            n = 2
-            while out.exists():
-                out = Path(save_dir) / f"{stem}-compressed-{n}.pdf"
-                n += 1
-            try:
-                if level == "custom":
-                    res = optimize.compress_pdf_custom(fp, target_pct, str(out))
-                else:
-                    res = optimize.compress_pdf(fp, level, str(out))
-                results.append(
-                    {
-                        "name": Path(fp).name,
-                        "ok": True,
-                        "output": str(out),
-                        "before_bytes": res["before_bytes"],
-                        "after_bytes": res["after_bytes"],
-                        "achieved_pct": res.get("achieved_pct"),
-                        "reason": res.get("reason"),
-                    }
-                )
-            except Exception as e:
-                logger.exception("compress_batch item failed: %s", fp)
-                results.append({"name": Path(fp).name, "ok": False, "error": str(e) or type(e).__name__})
+        n = len(file_paths) or 1
+        try:
+            for i, fp in enumerate(file_paths):
+                name = Path(fp).name
+                base = (f"{prefix}_" if prefix else "") + Path(fp).stem + "_compressed"
+                out = Path(save_dir) / f"{base}.pdf"
+                dup = 2
+                while out.exists():
+                    out = Path(save_dir) / f"{base}-{dup}.pdf"
+                    dup += 1
+
+                def on_file_progress(frac, i=i, name=name):
+                    self._set_progress((i + frac) / n * 100, f"File {i + 1} of {n}: {name}")
+
+                try:
+                    if level == "custom":
+                        self._set_progress((i + 0.05) / n * 100, f"File {i + 1} of {n}: {name}")
+                        res = optimize.compress_pdf_custom(fp, target_pct, str(out))
+                    else:
+                        res = optimize.compress_pdf(fp, level, str(out), progress=on_file_progress)
+                    results.append(
+                        {
+                            "name": name,
+                            "ok": True,
+                            "output": str(out),
+                            "before_bytes": res["before_bytes"],
+                            "after_bytes": res["after_bytes"],
+                            "achieved_pct": res.get("achieved_pct"),
+                            "reason": res.get("reason"),
+                        }
+                    )
+                except Exception as e:
+                    logger.exception("compress_batch item failed: %s", fp)
+                    results.append({"name": name, "ok": False, "error": str(e) or type(e).__name__})
+        finally:
+            self._clear_progress()
         return {"results": results, "save_dir": save_dir}
 
     def ocr_available(self):

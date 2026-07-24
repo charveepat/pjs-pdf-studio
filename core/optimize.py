@@ -33,6 +33,7 @@ _choose_strategy() decides which applies to a given file and tier:
 Whichever strategy runs, the output is compared to the original size before
 returning, never hand back something bigger than what came in."""
 import io
+import logging
 import math
 import multiprocessing
 import shutil
@@ -41,6 +42,8 @@ from pathlib import Path
 
 import fitz
 from PIL import Image
+
+logger = logging.getLogger("pjs")
 
 # RECOMPRESS: (jpeg quality, target DPI for however large the image is
 # actually drawn on the page). Only downsamples, an image already below
@@ -101,27 +104,47 @@ def _subset_fonts_worker(path: str, out_path: str, result_queue):
 
 def _subset_fonts_isolated(path: str) -> str | None:
     """Returns a path to a font-subsetted copy, or None if subsetting failed
-    or crashed, callers should fall back to the original file either way."""
-    tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
-    tmp.close()
-    queue = multiprocessing.Queue()
-    proc = multiprocessing.Process(target=_subset_fonts_worker, args=(path, tmp.name, queue))
-    proc.start()
-    proc.join(timeout=25)
+    or crashed, callers should fall back to the original file either way.
 
-    ok = False
-    if proc.is_alive():
-        proc.terminate()
-        proc.join()
-    elif proc.exitcode == 0:
-        try:
-            ok = queue.get_nowait()
-        except Exception:
-            ok = False
+    The subset runs in a throwaway process because doc.subset_fonts() can hard
+    segfault on already-subsetted fonts. The timeout is scaled to file size and
+    the whole thing is retried once, because the original fixed 25s was long
+    enough on a quiet machine but not on a loaded office PC running a batch,
+    where it would time out, get skipped, and silently leave fonts un-shrunk
+    (a font-heavy file then compressed far less in a batch than on its own).
+    Every skip is logged so that case is diagnosable from the log file."""
+    try:
+        size_mb = Path(path).stat().st_size / 1_000_000
+    except OSError:
+        size_mb = 5.0
+    timeout = max(60, int(size_mb * 12))  # generous headroom for a busy CPU
 
-    if ok:
-        return tmp.name
-    Path(tmp.name).unlink(missing_ok=True)
+    for attempt in (1, 2):
+        tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+        tmp.close()
+        queue = multiprocessing.Queue()
+        proc = multiprocessing.Process(target=_subset_fonts_worker, args=(path, tmp.name, queue))
+        proc.start()
+        proc.join(timeout=timeout)
+
+        ok = False
+        if proc.is_alive():
+            proc.terminate()
+            proc.join()
+            logger.warning("font subset timed out after %ds (attempt %d): %s", timeout, attempt, path)
+        elif proc.exitcode == 0:
+            try:
+                ok = queue.get_nowait()
+            except Exception:
+                ok = False
+        else:
+            logger.warning("font subset process exited %s (attempt %d): %s", proc.exitcode, attempt, path)
+
+        if ok:
+            return tmp.name
+        Path(tmp.name).unlink(missing_ok=True)
+
+    logger.warning("font subset skipped (fonts left un-shrunk) for %s", path)
     return None
 
 
@@ -152,7 +175,7 @@ def _has_real_text(doc: fitz.Document, sample_pages: int = 5) -> bool:
     return total_chars > 20 * n
 
 
-def _recompress_images(doc: fitz.Document, cfg: dict) -> None:
+def _recompress_images(doc: fitz.Document, cfg: dict, progress=None) -> None:
     # Map each image xref to one on-page rect (in points) so we can tell how
     # many pixels it actually needs. The same image can be reused across
     # pages (e.g. a letterhead), process each xref exactly once, since
@@ -166,7 +189,11 @@ def _recompress_images(doc: fitz.Document, cfg: dict) -> None:
             if rects and xref not in xref_pages_rects:
                 xref_pages_rects[xref] = (page, rects[0])
 
-    for xref, (page, rect) in xref_pages_rects.items():
+    items = list(xref_pages_rects.items())
+    total = len(items) or 1
+    for done, (xref, (page, rect)) in enumerate(items):
+        if progress:
+            progress((done + 1) / total)
         try:
             original_size = len(doc.extract_image(xref)["image"])
 
@@ -202,11 +229,14 @@ def _recompress_images(doc: fitz.Document, cfg: dict) -> None:
             continue  # a handful of odd/indexed images shouldn't sink the whole file
 
 
-def _rasterize(doc: fitz.Document, cfg: dict) -> fitz.Document:
+def _rasterize(doc: fitz.Document, cfg: dict, progress=None) -> fitz.Document:
     """Returns a new document with every page flattened to one JPEG image."""
     out = fitz.open()
     mat = fitz.Matrix(cfg["dpi"] / 72, cfg["dpi"] / 72)
-    for page in doc:
+    total = doc.page_count or 1
+    for idx, page in enumerate(doc):
+        if progress:
+            progress((idx + 1) / total)
         pix = page.get_pixmap(matrix=mat)
         pil_img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
         buf = io.BytesIO()
@@ -216,7 +246,15 @@ def _rasterize(doc: fitz.Document, cfg: dict) -> fitz.Document:
     return out
 
 
-def compress_pdf(path: str, level: str, save_path: str) -> dict:
+def compress_pdf(path: str, level: str, save_path: str, progress=None) -> dict:
+    """progress, if given, is called with a float 0..1 as the compression of
+    this one file advances, so the UI can show a real percentage instead of a
+    spinner."""
+    def emit(frac):
+        if progress:
+            progress(max(0.0, min(1.0, frac)))
+
+    emit(0.0)
     before = Path(path).stat().st_size
 
     probe = fitz.open(path)
@@ -236,16 +274,20 @@ def compress_pdf(path: str, level: str, save_path: str) -> dict:
     if strategy == "rasterize":
         cfg = RASTER_LEVELS[level] if not has_text else RASTER_EXTREME_FOR_TEXT_PDF
         doc = fitz.open(path)
-        out = _rasterize(doc, cfg)
+        # rasterizing every page is the bulk of the work, map it to 5..90%
+        out = _rasterize(doc, cfg, progress=lambda f: emit(0.05 + 0.85 * f))
         doc.close()
+        emit(0.92)
         out.save(save_path, garbage=4, deflate=True, deflate_images=True, clean=True, use_objstms=True, compression_effort=100)
         out.close()
     else:
         cfg = LEVELS.get(level, LEVELS["recommended"])
-        subsetted_path = _subset_fonts_isolated(path)
+        emit(0.05)
+        subsetted_path = _subset_fonts_isolated(path)  # can be slow; sits in the 5..20% band
+        emit(0.20)
         working_path = subsetted_path or path
         doc = fitz.open(working_path)
-        _recompress_images(doc, cfg)
+        _recompress_images(doc, cfg, progress=lambda f: emit(0.20 + 0.70 * f))
         doc.save(
             save_path,
             garbage=4,
@@ -260,6 +302,7 @@ def compress_pdf(path: str, level: str, save_path: str) -> dict:
         if subsetted_path:
             Path(subsetted_path).unlink(missing_ok=True)
 
+    emit(1.0)
     after = Path(save_path).stat().st_size
     if after >= before:
         # Nothing here actually helped this particular file, never hand

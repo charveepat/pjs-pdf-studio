@@ -1,4 +1,5 @@
 """PDF -> Word / Excel / PowerPoint / Images. All pure Python, no Office needed."""
+import re
 import tempfile
 from pathlib import Path
 
@@ -134,12 +135,15 @@ def _grid_from_words(words: list[dict], page_width: float) -> list[list[str]]:
                 return i
         return ncols - 1
 
-    centers = sorted(((w["top"] + w["bottom"]) / 2, w) for w in words)
+    # Sort by vertical centre only (never fall through to comparing the word
+    # dicts themselves, which raises when two words share the same centre).
+    ordered = sorted(words, key=lambda w: (w["top"] + w["bottom"]) / 2)
     med_h = sorted(w["bottom"] - w["top"] for w in words)[len(words) // 2]
     row_tol = max(2.0, med_h * 0.6)
 
     lines: list[dict] = []
-    for yc, w in centers:
+    for w in ordered:
+        yc = (w["top"] + w["bottom"]) / 2
         if lines and yc - lines[-1]["yc"] <= row_tol:
             line = lines[-1]
         else:
@@ -177,16 +181,38 @@ def _grid_from_words(words: list[dict], page_width: float) -> list[list[str]]:
     return rows
 
 
-def _ocr_words(doc, page_index: int, dpi: int = 300) -> list[dict] | None:
+def _winrt_iter(vec):
+    """winocr returns Windows runtime vectors (lines/words). Most builds make
+    them directly iterable, but fall back to index access so a projection
+    quirk can't turn OCR output into silently-empty results."""
+    if vec is None:
+        return []
+    try:
+        return list(vec)
+    except TypeError:
+        try:
+            return [vec.get_at(i) for i in range(vec.size)]
+        except Exception:
+            return []
+
+
+def _split_line_cols(text: str) -> list[str]:
+    """Rough column split for the raw-OCR fallback: OCR tends to preserve the
+    gaps between columns as runs of two or more spaces, so split on those."""
+    parts = [p for p in re.split(r"\s{2,}", text.strip()) if p]
+    return parts or [text.strip()]
+
+
+def _ocr_page(doc, page_index: int, dpi: int = 300):
     """Scanned statements (image-only PDFs with no text layer at all) can't be
-    read by any text method. On Windows we can still OCR them with the same
-    built-in engine used for compression legibility (winocr, offline, no
-    bundled binary). Renders the page to an image, OCRs it, and returns word
-    boxes in the same shape the text path uses so _grid_from_words can rebuild
-    the table. Returns None where OCR isn't available (e.g. not on Windows),
-    so the caller can flag the page instead of failing."""
+    read by any text method. On Windows we OCR them with the same built-in
+    engine used for compression legibility (winocr, offline, no bundled
+    binary). Returns (words, line_texts): word boxes for table reconstruction,
+    plus the plain text of each OCR line as a guaranteed fallback so a scanned
+    page never comes out empty. Returns (None, None) where OCR isn't available
+    (e.g. not on Windows), so the caller can flag the page instead."""
     if not legibility.is_available():
-        return None
+        return None, None
     import io
 
     import winocr
@@ -194,23 +220,38 @@ def _ocr_words(doc, page_index: int, dpi: int = 300) -> list[dict] | None:
 
     page = doc[page_index]
     pix = page.get_pixmap(matrix=fitz.Matrix(dpi / 72, dpi / 72))
-    img = Image.open(io.BytesIO(pix.tobytes("png")))
+    img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
     result = winocr.recognize_pil_sync(img)
     scale = 72.0 / dpi  # OCR boxes are in image pixels; convert back to PDF points
-    words = []
-    for line in getattr(result, "lines", []) or []:
-        for w in getattr(line, "words", []) or []:
-            r = w.bounding_rect
-            words.append(
-                {
-                    "text": w.text,
-                    "x0": r.x * scale,
-                    "x1": (r.x + r.width) * scale,
-                    "top": r.y * scale,
-                    "bottom": (r.y + r.height) * scale,
-                }
-            )
-    return words
+
+    words: list[dict] = []
+    line_texts: list[str] = []
+    for line in _winrt_iter(getattr(result, "lines", None)):
+        ltext = (getattr(line, "text", "") or "").strip()
+        if ltext:
+            line_texts.append(ltext)
+        for w in _winrt_iter(getattr(line, "words", None)):
+            try:
+                r = w.bounding_rect
+                words.append(
+                    {
+                        "text": w.text,
+                        "x0": r.x * scale,
+                        "x1": (r.x + r.width) * scale,
+                        "top": r.y * scale,
+                        "bottom": (r.y + r.height) * scale,
+                    }
+                )
+            except Exception:
+                continue
+
+    if not line_texts:
+        # Even if the line/word structure was unavailable, the flat .text is the
+        # same property compression legibility already relies on, so use it.
+        flat = getattr(result, "text", "") or ""
+        line_texts = [ln.strip() for ln in flat.splitlines() if ln.strip()]
+
+    return words, line_texts
 
 
 def pdf_to_excel(path: str, save_path: str) -> dict:
@@ -234,10 +275,18 @@ def pdf_to_excel(path: str, save_path: str) -> dict:
                 words = page.extract_words()
                 if not words:
                     # No text layer on this page: it's a scan. Try OCR.
-                    ocr = _ocr_words(doc, i)
-                    if ocr:
-                        rows = _grid_from_words(ocr, page.width)
-                    else:
+                    ocr_words, ocr_lines = _ocr_page(doc, i)
+                    if ocr_words is None and ocr_lines is None:
+                        scanned_pages.append(i + 1)  # OCR unavailable (not on Windows)
+                        continue
+                    rows = _grid_from_words(ocr_words, page.width) if ocr_words else []
+                    if len(rows) < 2 and ocr_lines:
+                        # The positional grid came out empty or too thin for
+                        # this scan; fall back to the raw OCR text so the page
+                        # is never blank, split into rough columns where the
+                        # spacing allows. Columns may need light manual cleanup.
+                        rows = [_split_line_cols(t) for t in ocr_lines]
+                    if not rows:
                         scanned_pages.append(i + 1)
                         continue
                 else:
