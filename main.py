@@ -180,6 +180,10 @@ class Api:
         organize.merge_pdfs(file_paths, save_path)
         return {"ok": True}
 
+    def merge_pages(self, items, save_path):
+        organize.merge_pages(items, save_path)
+        return {"ok": True}
+
     def split(self, file_path, save_dir, ranges=None, merge=False):
         outputs = organize.split_pdf(file_path, save_dir, ranges, merge)
         return {"ok": True, "outputs": outputs}
@@ -275,6 +279,28 @@ class Api:
 
     def render_page_preview(self, file_path, page_num, max_width=520):
         return preview.render_page(file_path, page_num, max_width)
+
+    def image_thumbnail(self, file_path, max_width=240):
+        """Small JPEG preview of an image file (for the Images to PDF grid),
+        as base64 so the UI can show it without a filesystem URL."""
+        import base64
+        import io
+
+        from PIL import Image
+
+        img = Image.open(file_path)
+        if img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+        w, h = img.size
+        if w > max_width:
+            img = img.resize((max_width, max(1, round(h * max_width / w))), Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=80)
+        return {
+            "image_b64": base64.b64encode(buf.getvalue()).decode("ascii"),
+            "width": img.width,
+            "height": img.height,
+        }
 
     def redact(self, file_path, boxes, save_path):
         security.redact_pdf(file_path, boxes, save_path)

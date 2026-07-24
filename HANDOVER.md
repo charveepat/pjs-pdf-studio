@@ -7,7 +7,7 @@ Local, offline PDF/Office toolkit for Piyush J. Shah & Co., Chartered Accountant
 ## How this project actually works (read this first)
 
 - **Stack**: `main.py` (pywebview entry point, exposes a Python `Api` class) + `core/*.py` (the real engine: PyMuPDF/fitz, pdf2docx, pdfplumber, python-docx/openpyxl/python-pptx, Pillow, pywin32) + `ui/index.html` (the entire UI, one self-contained HTML/CSS/JS file, talks to Python via `window.pywebview.api.*`).
-- **Build**: `.github/workflows/build-windows.yml` builds on every push to `main` on a free GitHub-hosted Windows runner, produces `PJS Pdf Studio.exe` as a downloadable Actions artifact. Takes about 2-3 minutes.
+- **Build**: `.github/workflows/build-windows.yml` builds on every push to `main` on a free GitHub-hosted Windows runner. Now packaged with PyInstaller **`--onedir`** (was `--onefile`): the artifact is a **folder** (`PJS Pdf Studio/` with the exe plus its files), not a single exe. This was to fix slow first-launch, onefile self-extracts its whole payload into a temp dir on every open, which got worse once Tesseract was bundled; onedir has no extraction step. The user downloads the artifact zip, extracts the folder, keeps the exe inside it, and runs it (a desktop shortcut is fine). Do not revert to onefile without a reason.
 - **The push workflow the user prefers**: I commit locally and give her the exact `git push` command; she runs it herself in Terminal (her stated preference, don't push for her without being told to). After she pushes, I check `gh run list` / `gh run view` / `gh api .../artifacts` to confirm the build succeeded, then give her the download path: open the run on GitHub, scroll to Artifacts, download the zip, unzip, run the exe.
 - **I test everything locally on Mac first**, using a venv at `.venv` (already set up, has all dependencies installed except the Windows-only ones like pywin32/winocr). I validate PDF output independently with poppler (`pdfinfo`, `pdftoppm`), not just by trusting PyMuPDF's own read-back. I visually render and inspect compression output, not just trust the size numbers, especially anything legibility-sensitive.
 - **She's testing on a real Windows PC separately.** Anything Windows-only (Office COM automation, the OCR legibility check) genuinely needs her machine to verify; I can't run those from this Mac.
@@ -18,9 +18,11 @@ All 16 tools work: Merge (with file reordering, see below), Split (range + visua
 
 ### Merge: file reordering
 
-The Merge file list (and Images to PDF, which is also order-sensitive) supports reordering before combining: drag a row, or use the per-row Up/Down arrows. Files combine top to bottom. `merge_pdfs` concatenates in list order, so controlling list order is the whole fix (`renderFileList` in `ui/index.html`).
+Merge is a **two-stage preview** (`ui/index.html`, `t.kind === 'merge'`):
+- **Stage 1 (files):** each added file is a card with a first-page thumbnail, page count, size, and whole-file reorder (drag or Up/Down arrows). The footer button merges whole files in list order via `merge_pdfs`.
+- **Stage 2 (pages):** clicking a card (or "Arrange pages") opens a board of every page of every file as draggable thumbnails, colour-coded by source file with a legend. Drag to arrange across files, hover to remove a page; the number badge is the final position. Merges in that exact page order via `Api.merge_pages` -> `organize.merge_pages` (opens each source once, appends the chosen pages in order). The footer button label switches per stage.
 
-**Planned (Phase 2, not yet built):** a two-stage Merge preview. Stage 1: each added file shown as a card with a first-page thumbnail. Stage 2: click in to a page-level board showing every page of every file as draggable thumbnails, rearrange pages across files, then merge in that exact page order. Needs a new page-level merge (current `merge_pdfs` only concatenates whole files) plus a drag grid; the thumbnail plumbing (`preview.render_page`, `renderPageThumbs`) already exists. Deferred to a second push at the user's request (weekly limit).
+Thumbnails come from `Api.render_page_preview` and are cached by `path#page` (`thumbCache`) so reordering never refetches. Images to PDF got the same treatment: a thumbnail grid (`Api.image_thumbnail`, Pillow) with drag reorder + hover-remove, each image becoming one page in shown order. Both boards share `wireBoardDrag`.
 
 ### Compress: batch (multiple PDFs at once)
 

@@ -283,6 +283,44 @@
   .field .prefixrow input{ width:88px; padding:7px 9px; border:1.5px solid var(--line); border-radius:7px; font-size:12px; background:var(--cabinet); color:var(--ink); }
   .field .prefixrow input:focus{ outline:none; border-color:var(--accent); }
 
+  /* Phase 2: file cards (merge stage 1) + page/image boards */
+  .fcards{ display:flex; flex-direction:column; gap:10px; margin-bottom:12px; }
+  .fcard{ display:flex; align-items:center; gap:12px; border:1.5px solid var(--line); border-radius:11px; padding:10px 12px; background:var(--panel); }
+  .fcard.clickable{ cursor:pointer; } .fcard.clickable:hover{ border-color:var(--accent); }
+  .fcard .drag{ cursor:grab; color:var(--ink-faint); font-size:14px; line-height:1; letter-spacing:-2px; user-select:none; }
+  .fcard .fthumb{ width:44px; height:58px; border-radius:5px; border:1px solid var(--line); background:var(--cabinet); object-fit:cover; flex:none; }
+  .fcard .fmeta{ flex:1; min-width:0; }
+  .fcard .fmeta .nm{ font-weight:600; font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .fcard .fmeta .sub{ font-family:var(--font-mono); font-size:11px; color:var(--ink-soft); margin-top:2px; }
+  .fcard .open{ font-size:11.5px; color:var(--accent); font-weight:600; white-space:nowrap; }
+  .fcard .ord{ display:flex; gap:2px; }
+  .fcard .ord button{ border:0; background:transparent; color:var(--ink-soft); font-size:10px; padding:1px 3px; cursor:pointer; border-radius:5px; }
+  .fcard .ord button:disabled{ opacity:.28; cursor:default; } .fcard .ord button:not(:disabled):hover{ color:var(--accent); background:var(--cabinet); }
+  .fcard .rm{ border:0; background:transparent; color:var(--ink-faint); font-size:11px; cursor:pointer; }
+  .fcard .rm:hover{ color:var(--accent); }
+  .fcard.dragging{ opacity:.45; } .fcard.dropbefore{ box-shadow:inset 0 2px 0 0 var(--accent); } .fcard.dropafter{ box-shadow:inset 0 -2px 0 0 var(--accent); }
+
+  .stagebar{ display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px; flex-wrap:wrap; }
+  .linkbtn{ border:0; background:transparent; color:var(--accent); font-family:inherit; font-size:12.5px; font-weight:600; cursor:pointer; padding:4px 0; }
+  .linkbtn:hover{ text-decoration:underline; }
+  .legend{ display:flex; gap:12px; flex-wrap:wrap; font-size:11px; color:var(--ink-soft); }
+  .legend span{ display:inline-flex; align-items:center; gap:5px; }
+  .legend .dot{ width:9px; height:9px; border-radius:3px; }
+
+  .pboard{ display:grid; grid-template-columns:repeat(auto-fill,minmax(94px,1fr)); gap:12px; }
+  .pcard{ position:relative; border:1.5px solid var(--line); border-radius:8px; background:var(--panel); padding:6px; cursor:grab; }
+  .pcard:hover{ border-color:var(--accent); }
+  .pcard.dragging{ opacity:.5; }
+  .pcard.dropbefore{ box-shadow:inset 3px 0 0 0 var(--accent); } .pcard.dropafter{ box-shadow:inset -3px 0 0 0 var(--accent); }
+  .pcard .pimg{ width:100%; height:106px; object-fit:contain; border:1px solid var(--line); border-radius:4px; background:var(--cabinet); display:block; }
+  .pcard .pslot{ width:100%; height:106px; border:1px solid var(--line); border-radius:4px; background:var(--cabinet); }
+  .pcard .pimg, .pcard .pslot{ pointer-events:none; }
+  .pcard .ord{ position:absolute; left:9px; top:9px; min-width:18px; height:18px; padding:0 4px; border-radius:10px; background:var(--accent); color:#fff; font-size:10px; font-weight:700; display:flex; align-items:center; justify-content:center; font-family:var(--font-mono); }
+  .pcard .src{ position:absolute; right:9px; top:9px; max-width:64px; padding:1px 5px; border-radius:5px; font-size:9px; font-weight:700; color:#fff; font-family:var(--font-mono); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .pcard .rm{ position:absolute; right:8px; bottom:28px; width:18px; height:18px; border-radius:50%; border:0; background:rgba(0,0,0,.55); color:#fff; font-size:12px; line-height:1; cursor:pointer; opacity:0; transition:opacity .12s; }
+  .pcard:hover .rm{ opacity:1; }
+  .pcard .cap{ margin-top:5px; font-size:10px; color:var(--ink-soft); text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-family:var(--font-mono); }
+
   .statusbar{ flex:none; display:flex; align-items:center; gap:16px; padding:7px 16px; border-top:1px solid var(--line); background:var(--cabinet); font-family:var(--font-mono); font-size:10.5px; color:var(--ink-faint); }
   .statusbar .dot{ width:6px;height:6px;border-radius:50%; background:var(--good); box-shadow:0 0 0 3px color-mix(in srgb, var(--good) 22%, transparent); }
   .statusbar .net{ margin-left:auto; }
@@ -669,94 +707,179 @@
       return;
     }
 
-    // ---- images-to-pdf / merge (multi file) ----
-    if(t.kind === 'images-to-pdf' || t.kind === 'merge'){
-      renderFileList();
+    var thumbCache = {};  // "path#page" -> base64 png, so reorders don't refetch
+    var FILECOLORS = ['var(--accent)','var(--brand-green)','var(--p-color)','var(--w-color)','var(--gold)','var(--pdf-color)'];
+    function fileColor(i){ return FILECOLORS[i % FILECOLORS.length]; }
+    function shortName(name){ return baseName(name).slice(0, 12); }
+    function setGoLabel(txt){ var l = byId('wfGo').querySelector('.btn-label'); if(l) l.textContent = txt; }
+    function pageThumb(imgEl, path, page, w){
+      var key = path + '#' + page;
+      if(thumbCache[key]){ imgEl.src = 'data:image/png;base64,' + thumbCache[key]; return; }
+      api().render_page_preview(path, page, w).then(function(r){ thumbCache[key] = r.image_b64; imgEl.src = 'data:image/png;base64,' + r.image_b64; });
+    }
+
+    // ---- merge (two-stage: whole files, then individual pages) ----
+    if(t.kind === 'merge'){
+      var stage = 1;
+      var pageItems = [];
+
+      function moveFile(from, to){
+        if(to < 0 || to >= files.length || from === to) return;
+        var m = files.splice(from, 1)[0]; files.splice(to, 0, m); renderStage1();
+      }
+      function ensurePageCounts(){
+        return Promise.all(files.map(function(f){
+          if(f.pages != null) return null;
+          return Promise.resolve(api().page_count(f.path)).then(function(n){ f.pages = n; });
+        }));
+      }
+
+      function renderStage1(){
+        stage = 1;
+        goBtn.disabled = files.length < 2;
+        setGoLabel('Merge & Save As…');
+        var hint = files.length
+          ? '<div class="hint" style="margin-bottom:10px">Files combine top to bottom. Drag or use the arrows to reorder. To arrange individual pages across files, open a file with <b>Arrange pages</b>.</div>'
+          : '';
+        var cards = files.map(function(f, i){
+          return '<div class="fcard clickable" draggable="true" data-idx="'+i+'">'
+            + '<span class="drag" title="Drag to reorder">&#8942;&#8942;</span>'
+            + '<img class="fthumb" data-thumb="'+i+'" alt="">'
+            + '<div class="fmeta"><div class="nm">'+f.name+'</div><div class="sub">'+(f.pages!=null? f.pages+' pages · ':'')+fmtBytes(f.size)+'</div></div>'
+            + '<span class="open">Arrange pages &#8594;</span>'
+            + '<span class="ord"><button class="mvup" data-i="'+i+'"'+(i===0?' disabled':'')+' title="Move up">&#9650;</button>'
+            + '<button class="mvdown" data-i="'+i+'"'+(i===files.length-1?' disabled':'')+' title="Move down">&#9660;</button></span>'
+            + '<button class="rm" data-i="'+i+'">Remove</button></div>';
+        }).join('');
+        var dzLabel = files.length ? 'Drop more PDFs, or click to browse' : 'Drop PDFs here, or click to choose';
+        body.innerHTML = hint + (files.length ? '<div class="fcards">'+cards+'</div>' : '') + dropzoneHtml(t, dzLabel);
+        files.forEach(function(f, i){
+          var el = body.querySelector('.fthumb[data-thumb="'+i+'"]');
+          if(el) pageThumb(el, f.path, 1, 120);
+        });
+        ensurePageCounts().then(function(){
+          files.forEach(function(f, i){
+            var sub = body.querySelectorAll('.fcards .fcard .sub')[i];
+            if(sub) sub.textContent = (f.pages!=null? f.pages+' pages · ':'') + fmtBytes(f.size);
+          });
+          goBtn.disabled = files.length < 2;
+        });
+        body.querySelectorAll('.fcard .rm').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); files.splice(+b.dataset.i,1); renderStage1(); }); });
+        body.querySelectorAll('.fcard .mvup').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); var i=+b.dataset.i; moveFile(i,i-1); }); });
+        body.querySelectorAll('.fcard .mvdown').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); var i=+b.dataset.i; moveFile(i,i+1); }); });
+        body.querySelectorAll('.fcard.clickable').forEach(function(card){
+          card.addEventListener('click', function(e){ if(e.target.closest('button')) return; if(files.length) openStage2(); });
+        });
+        var from = null;
+        body.querySelectorAll('.fcard').forEach(function(el){
+          el.addEventListener('dragstart', function(){ from=+el.dataset.idx; el.classList.add('dragging'); });
+          el.addEventListener('dragend', function(){ el.classList.remove('dragging'); body.querySelectorAll('.fcard').forEach(function(r){ r.classList.remove('dropbefore','dropafter'); }); });
+          el.addEventListener('dragover', function(e){ e.preventDefault(); var over=+el.dataset.idx; body.querySelectorAll('.fcard').forEach(function(r){ r.classList.remove('dropbefore','dropafter'); }); if(from===null||over===from)return; el.classList.add(over>from?'dropafter':'dropbefore'); });
+          el.addEventListener('drop', function(e){ e.preventDefault(); if(from===null)return; moveFile(from, +el.dataset.idx); from=null; });
+        });
+        wireMultiFileDrop(byId('wfDrop'), t.accept, function(picked){ picked.forEach(function(p){ p.pages=null; }); files = files.concat(picked); renderStage1(); });
+      }
+
+      function openStage2(){
+        ensurePageCounts().then(function(){
+          pageItems = [];
+          files.forEach(function(f, fi){ for(var p=1; p<=(f.pages||0); p++) pageItems.push({path:f.path, name:f.name, fi:fi, page:p}); });
+          renderStage2();
+        });
+      }
+      function updateStage2Go(){ setGoLabel('Merge '+pageItems.length+' page'+(pageItems.length===1?'':'s')+' & Save As…'); goBtn.disabled = pageItems.length < 1; }
+      function renderStage2(){
+        stage = 2;
+        updateStage2Go();
+        var legend = files.map(function(f, i){ return '<span><span class="dot" style="background:'+fileColor(i)+'"></span>'+shortName(f.name)+'</span>'; }).join('');
+        body.innerHTML = '<div class="stagebar"><button class="linkbtn" id="backFiles">&#8592; Back to files</button><div class="legend">'+legend+'</div></div>'
+          + '<div class="hint" style="margin-bottom:10px">Every page from every file. Drag to arrange them in any order, across files; the number is the final position. Hover a page to remove it.</div>'
+          + '<div class="pboard" id="pboard"></div>';
+        byId('backFiles').addEventListener('click', renderStage1);
+        renderBoard();
+      }
+      function renderBoard(){
+        var board = byId('pboard');
+        board.innerHTML = pageItems.map(function(it, idx){
+          return '<div class="pcard" draggable="true" data-i="'+idx+'">'
+            + '<span class="ord">'+(idx+1)+'</span>'
+            + '<span class="src" style="background:'+fileColor(it.fi)+'" title="'+it.name+'">'+shortName(it.name)+'</span>'
+            + '<img class="pimg" data-p="'+idx+'" alt="">'
+            + '<button class="rm" title="Remove this page">&times;</button>'
+            + '<div class="cap">page '+it.page+'</div></div>';
+        }).join('');
+        pageItems.forEach(function(it, idx){
+          var img = board.querySelector('.pimg[data-p="'+idx+'"]');
+          if(img) pageThumb(img, it.path, it.page, 150);
+        });
+        board.querySelectorAll('.pcard .rm').forEach(function(b){
+          b.addEventListener('click', function(e){ e.stopPropagation(); pageItems.splice(+b.closest('.pcard').dataset.i, 1); updateStage2Go(); renderBoard(); });
+        });
+        wireBoardDrag(board, pageItems, function(){ updateStage2Go(); renderBoard(); });
+      }
+
+      renderStage1();
       goBtn.addEventListener('click', function(){
-        if(files.length < (t.kind==='merge' ? 2 : 1)) {
-          showError(t.kind==='merge' ? 'Add at least two PDFs to merge.' : 'Add at least one image.');
-          return;
+        if(stage === 1){
+          if(files.length < 2){ showError('Add at least two PDFs to merge.'); return; }
+          api().pick_save_path('merged.pdf').then(function(savePath){
+            if(!savePath) return;
+            runGuarded(function(){
+              return api().merge(files.map(function(f){ return f.path; }), savePath).then(function(){ showSuccess(successBlock(savePath)); });
+            });
+          });
+        } else {
+          if(pageItems.length < 1){ showError('Keep at least one page.'); return; }
+          api().pick_save_path('merged.pdf').then(function(savePath){
+            if(!savePath) return;
+            runGuarded(function(){
+              var items = pageItems.map(function(it){ return {path:it.path, page:it.page}; });
+              return api().merge_pages(items, savePath).then(function(){ showSuccess(successBlock(savePath)); });
+            });
+          });
         }
-        var suggested = t.kind==='merge' ? 'merged.pdf' : (baseName(files[0].name) + '.pdf');
-        api().pick_save_path(suggested).then(function(savePath){
+      });
+      return;
+    }
+
+    // ---- images to pdf (thumbnail grid, reorder + remove) ----
+    if(t.kind === 'images-to-pdf'){
+      var imgCache = {};  // path -> base64 jpeg
+      setGoLabel('Create PDF & Save As…');
+      function renderImgGrid(){
+        goBtn.disabled = files.length < 1;
+        var hint = files.length ? '<div class="hint" style="margin-bottom:10px">Each image becomes one page, in this order. Drag to reorder, hover to remove.</div>' : '';
+        var cards = files.map(function(f, idx){
+          return '<div class="pcard" draggable="true" data-i="'+idx+'">'
+            + '<span class="ord">'+(idx+1)+'</span>'
+            + '<img class="pimg" data-p="'+idx+'" alt="">'
+            + '<button class="rm" title="Remove">&times;</button>'
+            + '<div class="cap" title="'+f.name+'">'+f.name+'</div></div>';
+        }).join('');
+        var dzLabel = files.length ? 'Drop more images, or click to browse' : 'Drop images here, or click to choose';
+        body.innerHTML = hint + (files.length ? '<div class="pboard">'+cards+'</div>' : '') + dropzoneHtml(t, dzLabel);
+        files.forEach(function(f, idx){
+          var img = body.querySelector('.pimg[data-p="'+idx+'"]');
+          if(!img) return;
+          if(imgCache[f.path]){ img.src = 'data:image/jpeg;base64,' + imgCache[f.path]; }
+          else api().image_thumbnail(f.path, 200).then(function(r){ imgCache[f.path] = r.image_b64; img.src = 'data:image/jpeg;base64,' + r.image_b64; });
+        });
+        body.querySelectorAll('.pcard .rm').forEach(function(b){
+          b.addEventListener('click', function(e){ e.stopPropagation(); files.splice(+b.closest('.pcard').dataset.i, 1); renderImgGrid(); });
+        });
+        wireBoardDrag(body.querySelector('.pboard') || body, files, renderImgGrid);
+        wireMultiFileDrop(byId('wfDrop'), t.accept, function(picked){ files = files.concat(picked); renderImgGrid(); });
+      }
+      renderImgGrid();
+      goBtn.addEventListener('click', function(){
+        if(files.length < 1){ showError('Add at least one image.'); return; }
+        api().pick_save_path(baseName(files[0].name) + '.pdf').then(function(savePath){
           if(!savePath) return;
           runGuarded(function(){
-            var paths = files.map(function(f){ return f.path; });
-            var call = t.kind==='merge' ? api().merge(paths, savePath) : api().images_to_pdf(paths, savePath);
-            return call.then(function(){ showSuccess(successBlock(savePath)); });
+            return api().images_to_pdf(files.map(function(f){ return f.path; }), savePath).then(function(){ showSuccess(successBlock(savePath)); });
           });
         });
       });
-      function moveFile(from, to){
-        if(to < 0 || to >= files.length || from === to) return;
-        var moved = files.splice(from, 1)[0];
-        files.splice(to, 0, moved);
-        renderFileList();
-      }
-      function renderFileList(){
-        var reorderHint = files.length > 1
-          ? '<div class="hint" style="margin-bottom:8px">Files combine top to bottom. Drag a row, or use the arrows, to change the order.</div>'
-          : '';
-        var rows = files.map(function(f, i){
-          return '<div class="row" draggable="true" data-idx="'+i+'">'
-            + '<span class="drag" title="Drag to reorder">&#8942;&#8942;</span>'
-            + '<span class="n">'+(i+1)+'</span>'
-            + '<span class="nm">'+f.name+'</span>'
-            + '<span class="fsize">'+fmtBytes(f.size)+'</span>'
-            + '<span class="ord"><button class="mvup" data-i="'+i+'" title="Move up"'+(i===0?' disabled':'')+'>&#9650;</button>'
-            + '<button class="mvdown" data-i="'+i+'" title="Move down"'+(i===files.length-1?' disabled':'')+'>&#9660;</button></span>'
-            + '<button class="rm" data-i="'+i+'">Remove</button></div>';
-        }).join('');
-        var dzLabel = files.length ? 'Drop more files, or click to browse' : (t.kind==='merge' ? 'Drop PDFs here, or click to choose' : 'Drop images here, or click to choose');
-        body.innerHTML = (files.length ? reorderHint + '<div class="filelist">'+rows+'</div>' : '') + dropzoneHtml(t, dzLabel);
-        function refresh(){
-          goBtn.disabled = files.length < (t.kind==='merge' ? 2 : 1);
-          renderFileList();
-        }
-        body.querySelectorAll('.filelist .rm').forEach(function(btn){
-          btn.addEventListener('click', function(){
-            files.splice(parseInt(btn.getAttribute('data-i'),10), 1);
-            refresh();
-          });
-        });
-        body.querySelectorAll('.filelist .mvup').forEach(function(btn){
-          btn.addEventListener('click', function(){ var i = parseInt(btn.getAttribute('data-i'),10); moveFile(i, i-1); });
-        });
-        body.querySelectorAll('.filelist .mvdown').forEach(function(btn){
-          btn.addEventListener('click', function(){ var i = parseInt(btn.getAttribute('data-i'),10); moveFile(i, i+1); });
-        });
-        var dragFrom = null;
-        body.querySelectorAll('.filelist .row').forEach(function(rowEl){
-          rowEl.addEventListener('dragstart', function(e){
-            dragFrom = parseInt(rowEl.getAttribute('data-idx'),10);
-            rowEl.classList.add('dragging');
-            e.dataTransfer.effectAllowed = 'move';
-          });
-          rowEl.addEventListener('dragend', function(){
-            rowEl.classList.remove('dragging');
-            body.querySelectorAll('.filelist .row').forEach(function(r){ r.classList.remove('dropbefore','dropafter'); });
-          });
-          rowEl.addEventListener('dragover', function(e){
-            e.preventDefault();
-            e.dataTransfer.dropEffect = 'move';
-            var over = parseInt(rowEl.getAttribute('data-idx'),10);
-            body.querySelectorAll('.filelist .row').forEach(function(r){ r.classList.remove('dropbefore','dropafter'); });
-            if(dragFrom === null || over === dragFrom) return;
-            rowEl.classList.add(over > dragFrom ? 'dropafter' : 'dropbefore');
-          });
-          rowEl.addEventListener('drop', function(e){
-            e.preventDefault();
-            if(dragFrom === null) return;
-            var to = parseInt(rowEl.getAttribute('data-idx'),10);
-            moveFile(dragFrom, to);
-            dragFrom = null;
-          });
-        });
-        wireMultiFileDrop(byId('wfDrop'), t.accept, function(picked){
-          files = files.concat(picked);
-          refresh();
-        });
-      }
       return;
     }
 
@@ -1345,6 +1468,32 @@
       Promise.all(Array.prototype.map.call(list, function(f){
         return fileToBase64(f).then(function(b64){ return api().receive_dropped_file(f.name, b64); });
       })).then(function(infos){ return resolveFiles(infos); }).then(function(resolved){ if(resolved.length) onFiles(resolved); });
+    });
+  }
+
+  // Shared drag-to-reorder for the .pcard grids (merge page board, images to
+  // pdf). Reorders arr in place by the dragged/dropped data-i indices, then
+  // asks the caller to re-render (thumbnails are cached, so re-render is cheap).
+  function wireBoardDrag(container, arr, rerender){
+    var from = null;
+    container.querySelectorAll('.pcard').forEach(function(el){
+      el.addEventListener('dragstart', function(){ from = +el.dataset.i; el.classList.add('dragging'); });
+      el.addEventListener('dragend', function(){ el.classList.remove('dragging'); container.querySelectorAll('.pcard').forEach(function(r){ r.classList.remove('dropbefore','dropafter'); }); });
+      el.addEventListener('dragover', function(e){
+        e.preventDefault();
+        var over = +el.dataset.i;
+        container.querySelectorAll('.pcard').forEach(function(r){ r.classList.remove('dropbefore','dropafter'); });
+        if(from === null || over === from) return;
+        el.classList.add(over > from ? 'dropafter' : 'dropbefore');
+      });
+      el.addEventListener('drop', function(e){
+        e.preventDefault();
+        if(from === null) return;
+        var to = +el.dataset.i;
+        if(from !== to){ var m = arr.splice(from, 1)[0]; arr.splice(to, 0, m); }
+        from = null;
+        rerender();
+      });
     });
   }
 

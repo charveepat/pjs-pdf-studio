@@ -13,6 +13,30 @@ def merge_pdfs(paths: list[str], save_path: str) -> None:
     out.close()
 
 
+def merge_pages(items: list[dict], save_path: str) -> None:
+    """Page-level merge for the visual arrange-and-merge board. items is an
+    ordered list of {"path": str, "page": 1-indexed int}; each source file is
+    opened once and cached, and pages are appended in exactly the given order,
+    so pages from different files can be interleaved however the user arranged
+    them."""
+    out = fitz.open()
+    cache: dict[str, fitz.Document] = {}
+    try:
+        for it in items:
+            path = it["path"]
+            page = int(it["page"])
+            src = cache.get(path)
+            if src is None:
+                src = fitz.open(path)
+                cache[path] = src
+            out.insert_pdf(src, from_page=page - 1, to_page=page - 1)
+        out.save(save_path)
+    finally:
+        out.close()
+        for src in cache.values():
+            src.close()
+
+
 def split_pdf(
     path: str,
     save_dir: str,

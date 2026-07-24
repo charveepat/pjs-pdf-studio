@@ -33,7 +33,7 @@ jobs:
 
       - name: Build with PyInstaller
         run: |
-          pyinstaller --onefile --windowed --name "PJS Pdf Studio" --add-data "ui;ui" `
+          pyinstaller --onedir --windowed --name "PJS Pdf Studio" --add-data "ui;ui" `
             --add-data "tessbundle;tesseract" `
             --collect-all pdfminer `
             --hidden-import win32timezone `
@@ -41,9 +41,13 @@ jobs:
             --collect-all winsdk `
             main.py
 
-      - name: Upload exe
+      # onedir instead of onefile: the app ships as a folder (exe + its files)
+      # so there is no per-launch self-extraction, which is what made the first
+      # open slow (it grew worse once Tesseract was bundled). Keep the exe
+      # inside its folder and run it from there (a desktop shortcut is fine).
+      - name: Upload app folder
         uses: actions/upload-artifact@v4
         with:
           name: PJS-Pdf-Studio-windows
-          path: dist/PJS Pdf Studio.exe
+          path: "dist/PJS Pdf Studio"
           retention-days: 30
