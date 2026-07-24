@@ -20,9 +20,21 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Install Tesseract OCR (for scanned PDF to Excel)
+        run: |
+          choco install tesseract --no-progress -y
+          # Stage just the files we bundle: the exe, its DLLs, and English data.
+          $src = "C:\Program Files\Tesseract-OCR"
+          New-Item -ItemType Directory -Force -Path tessbundle\tessdata | Out-Null
+          Copy-Item "$src\*.exe" tessbundle\ -Force
+          Copy-Item "$src\*.dll" tessbundle\ -Force
+          Copy-Item "$src\tessdata\eng.traineddata" tessbundle\tessdata\ -Force
+          Copy-Item "$src\tessdata\osd.traineddata" tessbundle\tessdata\ -Force
+
       - name: Build with PyInstaller
         run: |
           pyinstaller --onefile --windowed --name "PJS Pdf Studio" --add-data "ui;ui" `
+            --add-data "tessbundle;tesseract" `
             --collect-all pdfminer `
             --hidden-import win32timezone `
             --collect-all winocr `

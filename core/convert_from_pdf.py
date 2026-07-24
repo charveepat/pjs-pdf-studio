@@ -11,7 +11,7 @@ from pptx.dml.color import RGBColor
 from pptx.enum.text import MSO_ANCHOR
 from pptx.util import Emu, Pt
 
-from core import legibility
+from core import legibility, ocr
 
 EMU_PER_POINT = 12700  # exact: 914400 EMU/inch / 72 points/inch
 PDF_BOLD_FLAG = 1 << 4
@@ -203,14 +203,49 @@ def _split_line_cols(text: str) -> list[str]:
     return parts or [text.strip()]
 
 
-def _ocr_page(doc, page_index: int, dpi: int = 300):
-    """Scanned statements (image-only PDFs with no text layer at all) can't be
-    read by any text method. On Windows we OCR them with the same built-in
-    engine used for compression legibility (winocr, offline, no bundled
-    binary). Returns (words, line_texts): word boxes for table reconstruction,
-    plus the plain text of each OCR line as a guaranteed fallback so a scanned
-    page never comes out empty. Returns (None, None) where OCR isn't available
-    (e.g. not on Windows), so the caller can flag the page instead."""
+def _trim_empty_columns(rows: list[list[str]]) -> list[list[str]]:
+    """Drop columns that are empty across every row (the word-grid often leaves
+    a blank leading column, and OCR can leave stray empty ones). Rows are first
+    padded to equal width so column indexing is safe."""
+    if not rows:
+        return rows
+    ncols = max(len(r) for r in rows)
+    norm = [list(r) + [""] * (ncols - len(r)) for r in rows]
+    keep = [j for j in range(ncols) if any((norm[i][j] or "").strip() for i in range(len(norm)))]
+    if not keep:
+        return rows
+    return [[r[j] for j in keep] for r in norm]
+
+
+# A leading date like 06-01, 6/1, or 22/04/2026 at the very start of a cell.
+_LEADING_DATE = re.compile(r"^\s*(\d{1,2}[-/]\d{1,2}(?:[-/]\d{2,4})?)\s+(.+)$")
+
+
+def _split_leading_date(rows: list[list[str]]) -> list[list[str]]:
+    """On scanned statements the date and the description often land in one
+    column because there's no clean whitespace gap between them. When most rows
+    start their first cell with a date, peel that date into its own leading
+    column so Date and Description separate. Left untouched when it doesn't
+    clearly apply, so it can't scramble a non-statement layout."""
+    if not rows:
+        return rows
+    hits = sum(1 for r in rows if r and _LEADING_DATE.match(r[0] or ""))
+    if hits < max(3, 0.3 * len(rows)):
+        return rows
+    out = []
+    for r in rows:
+        m = _LEADING_DATE.match(r[0] or "") if r else None
+        if m:
+            out.append([m.group(1), m.group(2)] + list(r[1:]))
+        else:
+            out.append([""] + list(r))  # keep columns aligned with the split rows
+    return out
+
+
+def _winocr_page(doc, page_index: int, dpi: int, scale: float):
+    """Legacy fallback: Windows' built-in OCR (winocr). Kept only for the case
+    where Tesseract isn't reachable; in the frozen exe this often failed to
+    import at all, which is why Tesseract is now the primary engine."""
     if not legibility.is_available():
         return None, None
     import io
@@ -222,7 +257,6 @@ def _ocr_page(doc, page_index: int, dpi: int = 300):
     pix = page.get_pixmap(matrix=fitz.Matrix(dpi / 72, dpi / 72))
     img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
     result = winocr.recognize_pil_sync(img)
-    scale = 72.0 / dpi  # OCR boxes are in image pixels; convert back to PDF points
 
     words: list[dict] = []
     line_texts: list[str] = []
@@ -233,25 +267,36 @@ def _ocr_page(doc, page_index: int, dpi: int = 300):
         for w in _winrt_iter(getattr(line, "words", None)):
             try:
                 r = w.bounding_rect
-                words.append(
-                    {
-                        "text": w.text,
-                        "x0": r.x * scale,
-                        "x1": (r.x + r.width) * scale,
-                        "top": r.y * scale,
-                        "bottom": (r.y + r.height) * scale,
-                    }
-                )
+                words.append({"text": w.text, "x0": r.x * scale, "x1": (r.x + r.width) * scale, "top": r.y * scale, "bottom": (r.y + r.height) * scale})
             except Exception:
                 continue
-
     if not line_texts:
-        # Even if the line/word structure was unavailable, the flat .text is the
-        # same property compression legibility already relies on, so use it.
         flat = getattr(result, "text", "") or ""
         line_texts = [ln.strip() for ln in flat.splitlines() if ln.strip()]
-
     return words, line_texts
+
+
+def _ocr_page(doc, page_index: int, dpi: int = 300):
+    """Scanned statements (image-only PDFs with no text layer) can't be read by
+    any text method, so OCR them. Tesseract (bundled, offline) is the primary
+    engine; winocr is a last-resort fallback. Returns (words, line_texts): word
+    boxes for table reconstruction plus each line's plain text as a guaranteed
+    fallback so a scanned page never comes out empty. Returns (None, None) only
+    when no OCR engine is reachable at all, so the caller can flag the page."""
+    scale = 72.0 / dpi  # OCR boxes are in image pixels; convert back to PDF points
+    if ocr.available():
+        import io
+
+        from PIL import Image
+
+        page = doc[page_index]
+        pix = page.get_pixmap(matrix=fitz.Matrix(dpi / 72, dpi / 72))
+        img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
+        try:
+            return ocr.ocr_words(img, scale)
+        except Exception:
+            pass  # fall through to winocr
+    return _winocr_page(doc, page_index, dpi, scale)
 
 
 def pdf_to_excel(path: str, save_path: str) -> dict:
@@ -286,6 +331,8 @@ def pdf_to_excel(path: str, save_path: str) -> dict:
                         # is never blank, split into rough columns where the
                         # spacing allows. Columns may need light manual cleanup.
                         rows = [_split_line_cols(t) for t in ocr_lines]
+                    rows = _trim_empty_columns(rows)
+                    rows = _split_leading_date(rows)  # separate Date from Description on statements
                     if not rows:
                         scanned_pages.append(i + 1)
                         continue
@@ -315,9 +362,8 @@ def pdf_to_excel(path: str, save_path: str) -> dict:
         note = wb.create_sheet(title="Sheet1")
         if scanned_pages:
             note["A1"] = (
-                "This PDF is a scanned image with no text to extract. Converting it "
-                "to Excel needs the Windows OCR engine, which is only available when "
-                "running on Windows."
+                "This PDF is a scanned image with no text layer, and the OCR engine "
+                "could not be reached, so no text could be extracted from it."
             )
         else:
             note["A1"] = "No tables were detected in this PDF."
