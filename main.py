@@ -466,7 +466,10 @@ def main():
         min_size=(940, 660),
     )
     api.window = window
-    webview.start()
+    # Force Edge WebView2 backend (pre-installed on all Win10 1803+ / Win11
+    # machines). The default WinForms backend requires pythonnet/.NET and
+    # fails on machines where Python.Runtime.dll can't initialise.
+    webview.start(gui="edgechromium")
 
 
 if __name__ == "__main__":

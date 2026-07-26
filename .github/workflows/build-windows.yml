@@ -39,6 +39,7 @@ jobs:
             --hidden-import win32timezone `
             --collect-all winocr `
             --collect-all winsdk `
+            --hidden-import pywebview.platforms.edgechromium `
             main.py
 
       # onedir instead of onefile: the app ships as a folder (exe + its files)
