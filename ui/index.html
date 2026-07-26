@@ -189,11 +189,11 @@
   .matchrow .m-page{ font-family:var(--font-mono); font-size:10px; color:var(--ink-faint); background:var(--panel); border:1px solid var(--line); border-radius:4px; padding:2px 6px; flex:none; }
 
   .pagestrip{ display:flex; gap:8px; flex-wrap:wrap; }
-  .pagechip{ position:relative; width:64px; border:1px solid var(--line); background:var(--cabinet); border-radius:6px; padding:4px; cursor:pointer; text-align:center; overflow:hidden; }
+  .pagechip{ position:relative; width:120px; border:1px solid var(--line); background:var(--cabinet); border-radius:6px; padding:5px; cursor:pointer; text-align:center; overflow:hidden; }
   .pagechip:hover{ border-color:var(--accent); }
   .pagechip.active{ border-color:var(--accent); background:var(--accent-tint); }
   .pagechip img{ width:100%; display:block; border-radius:3px; }
-  .pagechip span{ display:block; font-size:9.5px; color:var(--ink-faint); font-family:var(--font-mono); margin-top:3px; }
+  .pagechip span{ display:block; font-size:10px; color:var(--ink-faint); font-family:var(--font-mono); margin-top:4px; }
   .pagechip-dot{ position:absolute; top:5px; right:5px; width:7px; height:7px; border-radius:50%; background:var(--accent); }
   .pagechip .pagechip-check{ position:absolute; top:4px; left:4px; width:16px; height:16px; border-radius:4px; background:var(--accent); color:#fff; display:none; align-items:center; justify-content:center; }
   .pagechip.active .pagechip-check{ display:flex; }
@@ -288,7 +288,7 @@
   .fcard{ display:flex; align-items:center; gap:12px; border:1.5px solid var(--line); border-radius:11px; padding:10px 12px; background:var(--panel); }
   .fcard.clickable{ cursor:pointer; } .fcard.clickable:hover{ border-color:var(--accent); }
   .fcard .drag{ cursor:grab; color:var(--ink-faint); font-size:14px; line-height:1; letter-spacing:-2px; user-select:none; }
-  .fcard .fthumb{ width:44px; height:58px; border-radius:5px; border:1px solid var(--line); background:var(--cabinet); object-fit:cover; flex:none; }
+  .fcard .fthumb{ width:72px; height:96px; border-radius:5px; border:1px solid var(--line); background:var(--cabinet); object-fit:cover; flex:none; }
   .fcard .fmeta{ flex:1; min-width:0; }
   .fcard .fmeta .nm{ font-weight:600; font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .fcard .fmeta .sub{ font-family:var(--font-mono); font-size:11px; color:var(--ink-soft); margin-top:2px; }
@@ -307,13 +307,13 @@
   .legend span{ display:inline-flex; align-items:center; gap:5px; }
   .legend .dot{ width:9px; height:9px; border-radius:3px; }
 
-  .pboard{ display:grid; grid-template-columns:repeat(auto-fill,minmax(94px,1fr)); gap:12px; }
+  .pboard{ display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:12px; }
   .pcard{ position:relative; border:1.5px solid var(--line); border-radius:8px; background:var(--panel); padding:6px; cursor:grab; }
   .pcard:hover{ border-color:var(--accent); }
   .pcard.dragging{ opacity:.5; }
   .pcard.dropbefore{ box-shadow:inset 3px 0 0 0 var(--accent); } .pcard.dropafter{ box-shadow:inset -3px 0 0 0 var(--accent); }
-  .pcard .pimg{ width:100%; height:106px; object-fit:contain; border:1px solid var(--line); border-radius:4px; background:var(--cabinet); display:block; }
-  .pcard .pslot{ width:100%; height:106px; border:1px solid var(--line); border-radius:4px; background:var(--cabinet); }
+  .pcard .pimg{ width:100%; height:190px; object-fit:contain; border:1px solid var(--line); border-radius:4px; background:var(--cabinet); display:block; }
+  .pcard .pslot{ width:100%; height:190px; border:1px solid var(--line); border-radius:4px; background:var(--cabinet); }
   .pcard .pimg, .pcard .pslot{ pointer-events:none; }
   .pcard .ord{ position:absolute; left:9px; top:9px; min-width:18px; height:18px; padding:0 4px; border-radius:10px; background:var(--accent); color:#fff; font-size:10px; font-weight:700; display:flex; align-items:center; justify-content:center; font-family:var(--font-mono); }
   .pcard .src{ position:absolute; right:9px; top:9px; max-width:64px; padding:1px 5px; border-radius:5px; font-size:9px; font-weight:700; color:#fff; font-family:var(--font-mono); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -427,10 +427,11 @@
     {id:'pdf-to-img', cat:'from-pdf', catLabel:'Convert from PDF', title:'PDF to Images', desc:'Export each page as a separate PNG.', icon:ICONS.pdf2img, badge:BADGE.img, tint:'var(--pdf-tint)', kind:'pdf-to-images', accept:'.pdf', out:'png'},
 
     {id:'compress', cat:'optimize', catLabel:'Optimize', title:'Compress PDF', desc:'Shrink one or several PDFs at once by re-encoding the images inside them.', icon:ICONS.compress, tint:'var(--pdf-tint)', kind:'compress', accept:'.pdf', out:'pdf'},
-    {id:'watermark', cat:'optimize', catLabel:'Optimize', title:'Add Watermark', desc:'Stamp text diagonally across every page.', icon:ICONS.watermark, tint:'var(--pdf-tint)', kind:'watermark', accept:'.pdf', out:'pdf'},
+    {id:'compress-folder', cat:'optimize', catLabel:'Optimize', title:'Compress Folder', desc:'Select a folder containing mixed files. Only PDFs are compressed and saved to an output folder you choose.', icon:ICONS.compress, tint:'var(--pdf-tint)', kind:'compress-folder', accept:'.pdf', out:'pdf'},
+    {id:'watermark', cat:'optimize', catLabel:'Optimize', title:'Add Watermark', desc:'Stamp text diagonally across every page, one file or many.', icon:ICONS.watermark, tint:'var(--pdf-tint)', kind:'watermark', accept:'.pdf', out:'pdf'},
 
     {id:'redact', cat:'security', catLabel:'Security', title:'Redact PDF', desc:'Black out sensitive text, by hand or auto-detected.', icon:ICONS.redact, tint:'var(--pdf-tint)', kind:'redact', accept:'.pdf', out:'pdf'},
-    {id:'password', cat:'security', catLabel:'Security', title:'Password Protect', desc:'Require a password before the PDF can be opened.', icon:ICONS.password, tint:'var(--pdf-tint)', kind:'password', accept:'.pdf', out:'pdf'}
+    {id:'password', cat:'security', catLabel:'Security', title:'Password Protect', desc:'Require a password before the PDF can be opened. Handles one file or a batch.', icon:ICONS.password, tint:'var(--pdf-tint)', kind:'password', accept:'.pdf', out:'pdf'}
   ];
 
   var CATS = [
@@ -514,13 +515,14 @@
 
   function actionLabel(t){
     if(t.kind==='compress') return 'Compress & Save As…';
+    if(t.kind==='compress-folder') return 'Compress PDFs in Folder…';
     if(t.kind==='redact') return 'Redact & Save As…';
-    if(t.kind==='password') return 'Protect & Save As…';
+    if(t.kind==='password') return 'Protect & Save…';
     if(t.kind==='merge') return 'Merge & Save As…';
     if(t.kind==='split') return 'Split & Choose Folder…';
     if(t.kind==='rotate') return 'Rotate & Save As…';
     if(t.kind==='remove') return 'Remove Pages & Save As…';
-    if(t.kind==='watermark') return 'Add Watermark & Save As…';
+    if(t.kind==='watermark') return 'Add Watermark & Save…';
     if(t.kind==='pdf-to-images') return 'Convert & Choose Folder…';
     if(t.kind==='office-to-pdf' || t.kind==='images-to-pdf') return 'Convert to PDF…';
     return 'Convert & Save As…';
@@ -650,59 +652,62 @@
       render();
     }
 
-    // ---- single-file kinds (office-to-pdf, pdf-to-word, pdf-to-ppt) ----
-    if(['office-to-pdf','pdf-to-word','pdf-to-ppt'].indexOf(t.kind) > -1){
-      body.innerHTML = '<div id="wfFileSlot"></div>';
-      setupSingleFile([]);
-
-      goBtn.addEventListener('click', function(){
-        if(!file){ showError('Choose a file first.'); return; }
-        api().pick_save_path(baseName(file.name) + '.' + t.out).then(function(savePath){
-          if(!savePath) return;
-          runGuarded(function(){
-            var call = t.kind==='office-to-pdf' ? api()[t.api](file.path, savePath)
-              : t.kind==='pdf-to-word' ? api().pdf_to_word(file.path, savePath)
-              : api().pdf_to_ppt(file.path, savePath);
-            return call.then(function(){ showSuccess(successBlock(savePath)); });
-          });
+    // ---- multi-file convert kinds (office-to-pdf, pdf-to-word, pdf-to-ppt, pdf-to-excel, pdf-to-images) ----
+    if(['office-to-pdf','pdf-to-word','pdf-to-ppt','pdf-to-excel','pdf-to-images'].indexOf(t.kind) > -1){
+      var cvtFiles = [];
+      function renderCvtFiles(){
+        var slot = byId('cvtFiles');
+        var dzLabel = 'Add ' + t.accept.split(',').map(function(e){ return e.trim().toUpperCase().replace('.',''); }).join(' / ') + ' files';
+        if(!cvtFiles.length){ slot.innerHTML = dropzoneHtml(t, dzLabel); wireMultiFileDrop(byId('wfDrop'), t.accept, function(p){ cvtFiles = cvtFiles.concat(p); renderCvtFiles(); }); goBtn.disabled = true; return; }
+        goBtn.disabled = false;
+        var rows = cvtFiles.map(function(f,i){
+          return '<div class="filelist"><div class="row"><span class="n">'+(i+1)+'</span><span class="nm">'+f.name+'</span><span class="fsize">'+fmtBytes(f.size)+'</span>'
+            +'<button data-rm="'+i+'">Remove</button></div></div>';
+        }).join('');
+        slot.innerHTML = rows + dropzoneHtml(t, 'Add more files');
+        wireMultiFileDrop(byId('wfDrop'), t.accept, function(p){ cvtFiles = cvtFiles.concat(p); renderCvtFiles(); });
+        slot.querySelectorAll('[data-rm]').forEach(function(btn){
+          btn.addEventListener('click', function(){ cvtFiles.splice(parseInt(btn.getAttribute('data-rm'),10),1); renderCvtFiles(); });
         });
-      });
-      return;
-    }
+      }
+      body.innerHTML = '<div id="cvtFiles"></div>';
+      renderCvtFiles();
 
-    // ---- pdf-to-excel (single file, reports table count) ----
-    if(t.kind === 'pdf-to-excel'){
-      body.innerHTML = '<div id="wfFileSlot"></div>';
-      setupSingleFile([]);
       goBtn.addEventListener('click', function(){
-        if(!file){ showError('Choose a file first.'); return; }
-        api().pick_save_path(baseName(file.name) + '.xlsx').then(function(savePath){
-          if(!savePath) return;
-          runGuarded(function(){
-            return api().pdf_to_excel(file.path, savePath).then(function(res){
-              var detail = res.tables_found + (res.tables_found===1 ? ' table found' : ' tables found');
-              showSuccess(successBlock(savePath, detail));
+        if(!cvtFiles.length){ showError('Add at least one file.'); return; }
+        // Single file: save-as dialog. Multiple files: folder picker.
+        if(cvtFiles.length === 1){
+          var f0 = cvtFiles[0];
+          var isFolderOut = (t.kind === 'pdf-to-images');
+          var pick = isFolderOut ? api().pick_save_dir() : api().pick_save_path(baseName(f0.name) + '.' + t.out);
+          pick.then(function(dest){
+            if(!dest) return;
+            runWithProgress(function(){
+              if(t.kind === 'office-to-pdf') return api()[t.api](f0.path, dest).then(function(){ showSuccess(successBlock(dest)); });
+              if(t.kind === 'pdf-to-word') return api().pdf_to_word(f0.path, dest).then(function(){ showSuccess(successBlock(dest)); });
+              if(t.kind === 'pdf-to-ppt') return api().pdf_to_ppt(f0.path, dest).then(function(){ showSuccess(successBlock(dest)); });
+              if(t.kind === 'pdf-to-excel') return api().pdf_to_excel(f0.path, dest).then(function(res){
+                showSuccess(successBlock(dest, res.tables_found + (res.tables_found===1?' table found':' tables found')));
+              });
+              if(t.kind === 'pdf-to-images') return api().pdf_to_images(f0.path, dest).then(function(res){
+                showSuccess(successBlock(dest, res.outputs.length + ' images'));
+              });
             });
           });
-        });
-      });
-      return;
-    }
-
-    // ---- pdf-to-images (single file, folder output) ----
-    if(t.kind === 'pdf-to-images'){
-      body.innerHTML = '<div id="wfFileSlot"></div>';
-      setupSingleFile([]);
-      goBtn.addEventListener('click', function(){
-        if(!file){ showError('Choose a file first.'); return; }
-        api().pick_save_dir().then(function(dir){
-          if(!dir) return;
-          runGuarded(function(){
-            return api().pdf_to_images(file.path, dir).then(function(res){
-              showSuccess(successBlock(dir, res.outputs.length + ' images'));
+        } else {
+          api().pick_save_dir().then(function(dir){
+            if(!dir) return;
+            var kindMap = {'office-to-pdf': t.api, 'pdf-to-word':'pdf_to_word','pdf-to-ppt':'pdf_to_ppt','pdf-to-excel':'pdf_to_excel','pdf-to-images':'pdf_to_images'};
+            var batchKind = kindMap[t.kind];
+            runWithProgress(function(){
+              return api().batch_convert(cvtFiles.map(function(f){return f.path;}), batchKind, dir).then(function(res){
+                var oks = res.results.filter(function(r){ return r.ok; });
+                showSuccess('<div class="s1"><svg viewBox="0 0 20 20" fill="none"><path d="M4 10.5l4 4L16 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Done</div>'
+                  + '<div class="path">'+oks.length+' of '+res.results.length+' converted into '+res.save_dir+'</div>');
+              });
             });
           });
-        });
+        }
       });
       return;
     }
@@ -824,7 +829,7 @@
           if(files.length < 2){ showError('Add at least two PDFs to merge.'); return; }
           api().pick_save_path('merged.pdf').then(function(savePath){
             if(!savePath) return;
-            runGuarded(function(){
+            runWithProgress(function(){
               return api().merge(files.map(function(f){ return f.path; }), savePath).then(function(){ showSuccess(successBlock(savePath)); });
             });
           });
@@ -832,7 +837,7 @@
           if(pageItems.length < 1){ showError('Keep at least one page.'); return; }
           api().pick_save_path('merged.pdf').then(function(savePath){
             if(!savePath) return;
-            runGuarded(function(){
+            runWithProgress(function(){
               var items = pageItems.map(function(it){ return {path:it.path, page:it.page}; });
               return api().merge_pages(items, savePath).then(function(){ showSuccess(successBlock(savePath)); });
             });
@@ -875,7 +880,7 @@
         if(files.length < 1){ showError('Add at least one image.'); return; }
         api().pick_save_path(baseName(files[0].name) + '.pdf').then(function(savePath){
           if(!savePath) return;
-          runGuarded(function(){
+          runWithProgress(function(){
             return api().images_to_pdf(files.map(function(f){ return f.path; }), savePath).then(function(){ showSuccess(successBlock(savePath)); });
           });
         });
@@ -937,7 +942,7 @@
         if(!Object.keys(toApply).length){ showError('Rotate at least one page first.'); return; }
         api().pick_save_path(baseName(file.name) + '-rotated.pdf').then(function(savePath){
           if(!savePath) return;
-          runGuarded(function(){
+          runWithProgress(function(){
             return api().rotate(file.path, savePath, toApply).then(function(){ showSuccess(successBlock(savePath)); });
           });
         });
@@ -984,7 +989,7 @@
         if(!toRemove.size){ showError('Tick at least one page to remove.'); return; }
         api().pick_save_path(baseName(file.name) + '-edited.pdf').then(function(savePath){
           if(!savePath) return;
-          runGuarded(function(){
+          runWithProgress(function(){
             return api().remove_pages(file.path, Array.from(toRemove), savePath).then(function(){ showSuccess(successBlock(savePath)); });
           });
         });
@@ -1049,7 +1054,7 @@
         var merge = picked.size > 0 && byId('mergeCheck').checked;
         api().pick_save_dir().then(function(dir){
           if(!dir) return;
-          runGuarded(function(){
+          runWithProgress(function(){
             return api().split(file.path, dir, ranges, merge).then(function(res){
               showSuccess(successBlock(dir, res.outputs.length + (res.outputs.length === 1 ? ' file' : ' files')));
             });
@@ -1161,13 +1166,138 @@
       return;
     }
 
+    // ---- compress folder (pick a folder, filter to PDFs, batch compress) ----
+    if(t.kind === 'compress-folder'){
+      var cfFolder = null;
+      var cfFiles = [];
+      var cfLevel = 'recommended';
+      var cfSel = 'pdf'; // 'all' or 'pdf'
+
+      body.innerHTML =
+        '<div class="panel-box" id="cfFolderBox"><h4>Source Folder</h4>'
+        + '<div style="display:flex;gap:10px;align-items:center;">'
+        + '<button class="btn btn-ghost" id="cfPickFolder" type="button">Select Folder&hellip;</button>'
+        + '<span id="cfFolderName" style="font-size:12px;color:var(--ink-soft);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>'
+        + '</div>'
+        + '<div style="margin-top:12px;display:flex;gap:10px;align-items:center;">'
+        + '<label style="font-size:12px;font-weight:600;color:var(--ink-soft);">Files to include:</label>'
+        + '<label class="checkrow" style="margin:0"><input type="radio" name="cfSel" value="pdf" checked> PDFs only</label>'
+        + '<label class="checkrow" style="margin:0"><input type="radio" name="cfSel" value="all"> All files (compress PDFs, copy others as-is)</label>'
+        + '</div></div>'
+        + '<div class="panel-box" style="display:none" id="cfFilesBox"><h4>PDFs found</h4><div id="cfFileList"></div></div>'
+        + '<div class="panel-box" style="display:none" id="cfOptionsBox"><h4>Compression level</h4>'
+        + '<div class="segmented" id="cfSeg">'
+        + '<div class="seg" data-lvl="low"><div class="t1">Low</div><div class="t2">Best quality</div></div>'
+        + '<div class="seg active" data-lvl="recommended"><div class="t1">Recommended</div><div class="t2">Balanced</div></div>'
+        + '<div class="seg" data-lvl="extreme"><div class="t1">Extreme</div><div class="t2">Smallest file</div></div>'
+        + '<div class="seg" data-lvl="custom"><div class="t1">Custom %</div><div class="t2">Target size</div></div>'
+        + '</div>'
+        + '<div class="field" id="cfCustomField" style="display:none;margin-top:10px">'
+        + '<label>Target reduction %</label><input type="number" id="cfCustomPct" min="5" max="98" value="70" style="width:80px;">'
+        + '<div class="hint">e.g. 70 = shrink to 30% of original size.</div></div>'
+        + '<div class="field" style="margin-top:10px"><label>Output filename prefix <span style="font-weight:400;color:var(--ink-faint)">(optional, max 4 chars)</span></label>'
+        + '<div class="prefixrow"><input type="text" id="cfPrefix" maxlength="4" placeholder="e.g. Q1"><span class="hint">Files save as prefix_name_compressed.pdf.</span></div></div>'
+        + '</div>';
+
+      function cfScanFolder(){
+        if(!cfFolder) return;
+        api().scan_folder_for_pdfs(cfFolder).then(function(infos){
+          cfFiles = infos;
+          var box = byId('cfFilesBox');
+          var list = byId('cfFileList');
+          if(!cfFiles.length){ list.innerHTML = '<div class="hint">No PDFs found in this folder.</div>'; box.style.display = ''; byId('cfOptionsBox').style.display = 'none'; goBtn.disabled = true; return; }
+          list.innerHTML = cfFiles.map(function(f,i){
+            return '<div class="row" style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--line)">'
+              +'<span class="n" style="font-family:var(--font-mono);font-size:11px;color:var(--ink-faint);width:20px">'+(i+1)+'</span>'
+              +'<span style="flex:1;font-size:12.5px;font-weight:600">'+f.name+'</span>'
+              +'<span style="font-family:var(--font-mono);font-size:11px;color:var(--ink-soft)">'+fmtBytes(f.size)+'</span>'
+              +'</div>';
+          }).join('');
+          box.style.display = '';
+          byId('cfOptionsBox').style.display = '';
+          goBtn.disabled = false;
+        });
+      }
+
+      byId('cfPickFolder').addEventListener('click', function(){
+        api().pick_input_folder().then(function(folder){
+          if(!folder) return;
+          cfFolder = folder;
+          byId('cfFolderName').textContent = folder;
+          cfScanFolder();
+        });
+      });
+
+      body.querySelectorAll('input[name="cfSel"]').forEach(function(radio){
+        radio.addEventListener('change', function(){ cfSel = radio.value; });
+      });
+
+      byId('cfSeg').querySelectorAll('.seg').forEach(function(seg){
+        seg.addEventListener('click', function(){
+          byId('cfSeg').querySelectorAll('.seg').forEach(function(s){ s.classList.remove('active'); });
+          seg.classList.add('active');
+          cfLevel = seg.getAttribute('data-lvl');
+          byId('cfCustomField').style.display = cfLevel === 'custom' ? '' : 'none';
+        });
+      });
+
+      goBtn.addEventListener('click', function(){
+        if(!cfFolder || !cfFiles.length){ showError('Select a folder with PDFs first.'); return; }
+        api().pick_save_dir().then(function(dir){
+          if(!dir) return;
+          var prefix = (byId('cfPrefix').value || '').trim().slice(0,4);
+          var targetPct = cfLevel === 'custom' ? parseInt(byId('cfCustomPct').value, 10) : null;
+          runWithProgress(function(){
+            return api().compress_batch(cfFiles.map(function(f){return f.path;}), cfLevel, dir, targetPct, prefix).then(function(res){
+              var oks = res.results.filter(function(r){ return r.ok; });
+              var saved = oks.reduce(function(s,r){ return s + (r.before_bytes - r.after_bytes); }, 0);
+              showSuccess('<div class="s1"><svg viewBox="0 0 20 20" fill="none"><path d="M4 10.5l4 4L16 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Done</div>'
+                + '<div class="path">'+oks.length+' of '+res.results.length+' compressed. '
+                + 'Total saved: '+fmtBytes(saved)+'. Output: '+res.save_dir+'</div>');
+            });
+          });
+        });
+      });
+      return;
+    }
+
     // ---- watermark (adjustable size/opacity, live preview, every page) ----
     if(t.kind === 'watermark'){
-      body.innerHTML = '<div id="wfFileSlot"></div><div class="panel-box" style="display:none" id="wmBox"><h4>Watermark</h4>'
+      var wmFiles = [];
+      function renderWmFiles(){
+        var slot = byId('wmFileSlot');
+        if(!wmFiles.length){
+          slot.innerHTML = dropzoneHtml(t);
+          wireMultiFileDrop(byId('wfDrop'), t.accept, function(p){ wmFiles = wmFiles.concat(p); renderWmFiles(); });
+          byId('wmBox').style.display = 'none'; goBtn.disabled = true; return;
+        }
+        goBtn.disabled = false;
+        var rows = wmFiles.map(function(f,i){
+          return '<div class="row"><span class="n">'+(i+1)+'</span><span class="nm">'+f.name+'</span><span class="fsize">'+fmtBytes(f.size)+'</span>'
+            +'<button data-rm="'+i+'">Remove</button></div>';
+        }).join('');
+        slot.innerHTML = '<div class="filelist">'+rows+'</div>' + dropzoneHtml(t, 'Add more PDFs');
+        wireMultiFileDrop(byId('wfDrop'), t.accept, function(p){ wmFiles = wmFiles.concat(p); renderWmFiles(); });
+        slot.querySelectorAll('[data-rm]').forEach(function(btn){
+          btn.addEventListener('click', function(){ wmFiles.splice(parseInt(btn.getAttribute('data-rm'),10),1); renderWmFiles(); });
+        });
+        byId('wmBox').style.display = '';
+        // Load preview from first file
+        api().render_page_preview(wmFiles[0].path, 1, 520).then(function(r){
+          var wrap = byId('wmPreview');
+          if(!wrap) return;
+          wrap.setAttribute('data-scale', r.scale);
+          wrap.innerHTML = '<img src="data:image/png;base64,' + r.image_b64 + '"><div class="wm-preview-text" id="wmPreviewText"></div>';
+          updatePreview();
+        });
+      }
+
+      body.innerHTML = '<div id="wmFileSlot"></div>'
+        + '<div class="panel-box" style="display:none" id="wmBox"><h4>Watermark</h4>'
         + '<div class="field"><input type="text" id="wmInput" placeholder="e.g. DRAFT or CONFIDENTIAL" value="CONFIDENTIAL"></div>'
         + '<div class="sliderrow"><label>Font size</label><input type="range" id="wmSize" min="12" max="120" value="48"><span class="val" id="wmSizeVal">48pt</span></div>'
         + '<div class="sliderrow"><label>Opacity</label><input type="range" id="wmOpacity" min="5" max="80" value="25"><span class="val" id="wmOpacityVal">25%</span></div>'
-        + '<div class="hint" style="margin-bottom:6px">Preview (applies the same way to every page):</div>'
+        + '<div class="hint" style="margin-bottom:6px">Preview (applies to every page of every file):</div>'
         + '<div class="wm-preview" id="wmPreview"></div></div>';
 
       function updatePreview(){
@@ -1184,58 +1314,100 @@
       byId('wmSize').addEventListener('input', function(){ byId('wmSizeVal').textContent = byId('wmSize').value + 'pt'; updatePreview(); });
       byId('wmOpacity').addEventListener('input', function(){ byId('wmOpacityVal').textContent = byId('wmOpacity').value + '%'; updatePreview(); });
 
-      setupSingleFile(['wmBox'], function(){
-        api().render_page_preview(file.path, 1, 520).then(function(r){
-          var wrap = byId('wmPreview');
-          wrap.setAttribute('data-scale', r.scale);
-          wrap.innerHTML = '<img src="data:image/png;base64,' + r.image_b64 + '"><div class="wm-preview-text" id="wmPreviewText"></div>';
-          updatePreview();
-        });
-      });
+      renderWmFiles();
 
       goBtn.addEventListener('click', function(){
-        if(!file){ showError('Choose a file first.'); return; }
+        if(!wmFiles.length){ showError('Add at least one file.'); return; }
         var text = byId('wmInput').value.trim() || 'CONFIDENTIAL';
         var fontSize = parseInt(byId('wmSize').value, 10);
         var opacity = parseInt(byId('wmOpacity').value, 10) / 100;
-        api().pick_save_path(baseName(file.name) + '-watermarked.pdf').then(function(savePath){
-          if(!savePath) return;
-          runGuarded(function(){
-            return api().watermark(file.path, text, savePath, opacity, fontSize).then(function(){ showSuccess(successBlock(savePath)); });
+        if(wmFiles.length === 1){
+          api().pick_save_path(baseName(wmFiles[0].name) + '-watermarked.pdf').then(function(savePath){
+            if(!savePath) return;
+            runWithProgress(function(){
+              return api().watermark(wmFiles[0].path, text, savePath, opacity, fontSize).then(function(){ showSuccess(successBlock(savePath)); });
+            });
           });
-        });
+        } else {
+          api().pick_save_dir().then(function(dir){
+            if(!dir) return;
+            runWithProgress(function(){
+              return api().batch_watermark(wmFiles.map(function(f){return f.path;}), text, dir, opacity, fontSize).then(function(res){
+                var oks = res.results.filter(function(r){ return r.ok; });
+                showSuccess('<div class="s1"><svg viewBox="0 0 20 20" fill="none"><path d="M4 10.5l4 4L16 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Done</div>'
+                  + '<div class="path">'+oks.length+' of '+res.results.length+' watermarked into '+res.save_dir+'</div>');
+              });
+            });
+          });
+        }
       });
       return;
     }
 
     // ---- password ----
-    if(t.kind === 'password'){
-      body.innerHTML = '<div id="wfFileSlot"></div><div class="panel-box" style="display:none" id="pwBox"><h4>Set password</h4>'
-        + '<div class="field"><label>Password</label><div class="pwrow"><input type="password" id="pwOne"><button class="pw-toggle" data-for="pwOne" type="button">Show</button></div></div>'
-        + '<div class="field"><label>Confirm</label><div class="pwrow"><input type="password" id="pwTwo"><button class="pw-toggle" data-for="pwTwo" type="button">Show</button></div></div>'
-        + '<div class="hint" id="pwHint">Anyone opening this PDF will need this password.</div></div>';
-      body.querySelectorAll('.pw-toggle').forEach(function(btn){
-        btn.addEventListener('click', function(){
-          var inp = byId(btn.getAttribute('data-for'));
-          var showing = inp.type === 'text';
-          inp.type = showing ? 'password' : 'text';
-          btn.textContent = showing ? 'Show' : 'Hide';
+    if(t.kind === ‘password’){
+      var pwFiles = [];
+      function renderPwFiles(){
+        var slot = byId(‘pwFileSlot’);
+        if(!pwFiles.length){
+          slot.innerHTML = dropzoneHtml(t);
+          wireMultiFileDrop(byId(‘wfDrop’), t.accept, function(p){ pwFiles = pwFiles.concat(p); renderPwFiles(); });
+          byId(‘pwBox’).style.display = ‘none’; goBtn.disabled = true; return;
+        }
+        goBtn.disabled = false;
+        var rows = pwFiles.map(function(f,i){
+          return ‘<div class="row"><span class="n">’+(i+1)+’</span><span class="nm">’+f.name+’</span><span class="fsize">’+fmtBytes(f.size)+’</span>’
+            +’<button data-rm="’+i+’">Remove</button></div>’;
+        }).join(‘’);
+        slot.innerHTML = ‘<div class="filelist">’+rows+’</div>’ + dropzoneHtml(t, ‘Add more PDFs’);
+        wireMultiFileDrop(byId(‘wfDrop’), t.accept, function(p){ pwFiles = pwFiles.concat(p); renderPwFiles(); });
+        slot.querySelectorAll(‘[data-rm]’).forEach(function(btn){
+          btn.addEventListener(‘click’, function(){ pwFiles.splice(parseInt(btn.getAttribute(‘data-rm’),10),1); renderPwFiles(); });
+        });
+        byId(‘pwBox’).style.display = ‘’;
+      }
+
+      body.innerHTML = ‘<div id="pwFileSlot"></div>’
+        + ‘<div class="panel-box" style="display:none" id="pwBox"><h4>Set password</h4>’
+        + ‘<div class="field"><label>Password</label><div class="pwrow"><input type="password" id="pwOne"><button class="pw-toggle" data-for="pwOne" type="button">Show</button></div></div>’
+        + ‘<div class="field"><label>Confirm</label><div class="pwrow"><input type="password" id="pwTwo"><button class="pw-toggle" data-for="pwTwo" type="button">Show</button></div></div>’
+        + ‘<div class="hint" id="pwHint">Anyone opening this PDF will need this password.</div></div>’;
+      body.querySelectorAll(‘.pw-toggle’).forEach(function(btn){
+        btn.addEventListener(‘click’, function(){
+          var inp = byId(btn.getAttribute(‘data-for’));
+          var showing = inp.type === ‘text’;
+          inp.type = showing ? ‘password’ : ‘text’;
+          btn.textContent = showing ? ‘Show’ : ‘Hide’;
         });
       });
-      setupSingleFile(['pwBox']);
-      goBtn.addEventListener('click', function(){
-        if(!file){ showError('Choose a file first.'); return; }
-        var p1 = byId('pwOne').value, p2 = byId('pwTwo').value;
-        var hint = byId('pwHint');
-        if(!p1){ hint.textContent = 'Enter a password.'; hint.style.color = 'var(--warn)'; return; }
-        if(p1 !== p2){ hint.textContent = 'Passwords don’t match.'; hint.style.color = 'var(--warn)'; return; }
-        hint.textContent = 'Anyone opening this PDF will need this password.'; hint.style.color = 'var(--ink-faint)';
-        api().pick_save_path(baseName(file.name) + '-protected.pdf').then(function(savePath){
-          if(!savePath) return;
-          runGuarded(function(){
-            return api().protect(file.path, p1, savePath).then(function(){ showSuccess(successBlock(savePath)); });
+      renderPwFiles();
+
+      goBtn.addEventListener(‘click’, function(){
+        if(!pwFiles.length){ showError(‘Add at least one file.’); return; }
+        var p1 = byId(‘pwOne’).value, p2 = byId(‘pwTwo’).value;
+        var hint = byId(‘pwHint’);
+        if(!p1){ hint.textContent = ‘Enter a password.’; hint.style.color = ‘var(--warn)’; return; }
+        if(p1 !== p2){ hint.textContent = "Passwords don’t match."; hint.style.color = ‘var(--warn)’; return; }
+        hint.textContent = ‘Anyone opening this PDF will need this password.’; hint.style.color = ‘var(--ink-faint)’;
+        if(pwFiles.length === 1){
+          api().pick_save_path(baseName(pwFiles[0].name) + ‘-protected.pdf’).then(function(savePath){
+            if(!savePath) return;
+            runWithProgress(function(){
+              return api().protect(pwFiles[0].path, p1, savePath).then(function(){ showSuccess(successBlock(savePath)); });
+            });
           });
-        });
+        } else {
+          api().pick_save_dir().then(function(dir){
+            if(!dir) return;
+            runWithProgress(function(){
+              return api().batch_protect(pwFiles.map(function(f){return f.path;}), p1, dir).then(function(res){
+                var oks = res.results.filter(function(r){ return r.ok; });
+                showSuccess(‘<div class="s1"><svg viewBox="0 0 20 20" fill="none"><path d="M4 10.5l4 4L16 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Done</div>’
+                  + ‘<div class="path">’+oks.length+’ of ‘+res.results.length+’ protected into ‘+res.save_dir+’</div>’);
+              });
+            });
+          });
+        }
       });
       return;
     }
@@ -1360,7 +1532,7 @@
         if(!boxes.length){ showError('Scan for matches or draw at least one manual box first.'); return; }
         api().pick_save_path(baseName(file.name) + '-redacted.pdf').then(function(savePath){
           if(!savePath) return;
-          runGuarded(function(){
+          runWithProgress(function(){
             return api().redact(file.path, boxes, savePath).then(function(){ showSuccess(successBlock(savePath, boxes.length + ' areas redacted')); });
           });
         });

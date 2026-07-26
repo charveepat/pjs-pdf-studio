@@ -2,7 +2,7 @@
 
 Local, offline PDF/Office toolkit for Piyush J. Shah & Co., Chartered Accountant. Built with Python + pywebview, packaged as a single Windows `.exe` via GitHub Actions. Repo: `/Users/charveepatel/Claude/pjs-pdf-studio`, GitHub: `charveepat/pjs-pdf-studio` (private).
 
-**Start a new chat with this file open and say what you want changed.** Everything below is already built, tested, and pushed, current as of commit `cd11652`.
+**Start a new chat with this file open and say what you want changed.** Everything below is already built, tested, and pushed, current as of commit `b596c14` (Phase 2 merge). The local branch has additional unreleased changes described below.
 
 ## How this project actually works (read this first)
 
@@ -11,6 +11,14 @@ Local, offline PDF/Office toolkit for Piyush J. Shah & Co., Chartered Accountant
 - **The push workflow the user prefers**: I commit locally and give her the exact `git push` command; she runs it herself in Terminal (her stated preference, don't push for her without being told to). After she pushes, I check `gh run list` / `gh run view` / `gh api .../artifacts` to confirm the build succeeded, then give her the download path: open the run on GitHub, scroll to Artifacts, download the zip, unzip, run the exe.
 - **I test everything locally on Mac first**, using a venv at `.venv` (already set up, has all dependencies installed except the Windows-only ones like pywin32/winocr). I validate PDF output independently with poppler (`pdfinfo`, `pdftoppm`), not just by trusting PyMuPDF's own read-back. I visually render and inspect compression output, not just trust the size numbers, especially anything legibility-sensitive.
 - **She's testing on a real Windows PC separately.** Anything Windows-only (Office COM automation, the OCR legibility check) genuinely needs her machine to verify; I can't run those from this Mac.
+
+## Unreleased local changes (not yet pushed/built)
+
+- **Preview sizes doubled**: `pagechip` width 64px -> 120px; merge-board `pcard .pimg` height 106px -> 190px; merge `fcard .fthumb` 44x58px -> 72x96px. No backend change needed; thumbnails render at 520px and CSS scales them down.
+- **Multi-file upload on all tools**: office-to-pdf, pdf-to-word, pdf-to-ppt, pdf-to-excel, pdf-to-images, watermark, and password-protect all now accept multiple files. Single file: the old save-as-dialog flow. Multiple files: folder picker, `batch_convert` / `batch_watermark` / `batch_protect` in `main.py` run each file in sequence and report per-file results.
+- **Progress bar on every tool**: all `runGuarded` call sites replaced with `runWithProgress`. The function definition remains (kept for any future use). Every tool now shows the live percentage bar while working.
+- **Compress Folder tool** (new, `kind:'compress-folder'`): lets the user pick a source folder, scans it for PDFs (via `Api.scan_folder_for_pdfs` in `main.py`), shows the list, then compresses all of them into a chosen output folder with the same 4-level compression as the regular batch compress. `Api.pick_input_folder` added to `main.py` for the folder-picker dialog.
+- **Item 5 (editable PDF)** deferred: discussed, decided against adding a generic "edit PDF text" tool because PyMuPDF's in-place text editing is unreliable on complex PDFs, and the existing PDF-to-Word flow (which is already multi-file now) is the right answer for the actual use case. If a specific edit capability is needed, revisit with a concrete example.
 
 ## Current state: fully shipped and working
 

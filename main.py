@@ -175,6 +175,18 @@ class Api:
             return None
         return result[0] if isinstance(result, (list, tuple)) else result
 
+    def pick_input_folder(self):
+        result = self.window.create_file_dialog(webview.FOLDER_DIALOG)
+        if not result:
+            return None
+        return result[0] if isinstance(result, (list, tuple)) else result
+
+    def scan_folder_for_pdfs(self, folder_path: str):
+        """Return info dicts for every PDF found directly inside folder_path (non-recursive)."""
+        folder = Path(folder_path)
+        pdfs = sorted(folder.glob("*.pdf"), key=lambda p: p.name.lower())
+        return [_file_info(str(p)) for p in pdfs]
+
     # ---------- organize ----------
     def merge(self, file_paths, save_path):
         organize.merge_pdfs(file_paths, save_path)
@@ -342,6 +354,98 @@ class Api:
     def pdf_to_images(self, file_path, save_dir):
         outputs = convert_from_pdf.pdf_to_images(file_path, save_dir)
         return {"ok": True, "outputs": outputs}
+
+    def batch_convert(self, file_paths: list, kind: str, save_dir: str):
+        """Run a single-file conversion over multiple files, writing each
+        output to save_dir. kind is one of: word_to_pdf, excel_to_pdf,
+        ppt_to_pdf, pdf_to_word, pdf_to_ppt, pdf_to_excel, pdf_to_images."""
+        results = []
+        n = len(file_paths) or 1
+        ext_map = {
+            "word_to_pdf": ".pdf", "excel_to_pdf": ".pdf", "ppt_to_pdf": ".pdf",
+            "pdf_to_word": ".docx", "pdf_to_ppt": ".pptx", "pdf_to_excel": ".xlsx",
+            "pdf_to_images": None,
+        }
+        out_ext = ext_map.get(kind)
+        try:
+            for i, fp in enumerate(file_paths):
+                name = Path(fp).name
+                self._set_progress((i / n) * 100, f"File {i+1} of {n}: {name}")
+                try:
+                    if out_ext:
+                        out = Path(save_dir) / (Path(fp).stem + out_ext)
+                        dup = 2
+                        while out.exists():
+                            out = Path(save_dir) / f"{Path(fp).stem}-{dup}{out_ext}"
+                            dup += 1
+                        if kind == "word_to_pdf":
+                            convert_to_pdf.word_to_pdf(fp, str(out))
+                        elif kind == "excel_to_pdf":
+                            convert_to_pdf.excel_to_pdf(fp, str(out))
+                        elif kind == "ppt_to_pdf":
+                            convert_to_pdf.ppt_to_pdf(fp, str(out))
+                        elif kind == "pdf_to_word":
+                            convert_from_pdf.pdf_to_word(fp, str(out))
+                        elif kind == "pdf_to_ppt":
+                            convert_from_pdf.pdf_to_ppt(fp, str(out))
+                        elif kind == "pdf_to_excel":
+                            convert_from_pdf.pdf_to_excel(fp, str(out))
+                        results.append({"name": name, "ok": True, "output": str(out)})
+                    else:
+                        sub = Path(save_dir) / Path(fp).stem
+                        sub.mkdir(parents=True, exist_ok=True)
+                        outs = convert_from_pdf.pdf_to_images(fp, str(sub))
+                        results.append({"name": name, "ok": True, "output": str(sub), "count": len(outs)})
+                except Exception as e:
+                    logger.exception("batch_convert item failed: %s", fp)
+                    results.append({"name": name, "ok": False, "error": str(e) or type(e).__name__})
+        finally:
+            self._clear_progress()
+        return {"results": results, "save_dir": save_dir}
+
+    def batch_watermark(self, file_paths: list, text: str, save_dir: str, opacity: float = 0.25, font_size: int = 48):
+        results = []
+        n = len(file_paths) or 1
+        try:
+            for i, fp in enumerate(file_paths):
+                name = Path(fp).name
+                self._set_progress((i / n) * 100, f"File {i+1} of {n}: {name}")
+                try:
+                    out = Path(save_dir) / (Path(fp).stem + "-watermarked.pdf")
+                    dup = 2
+                    while out.exists():
+                        out = Path(save_dir) / f"{Path(fp).stem}-watermarked-{dup}.pdf"
+                        dup += 1
+                    optimize.watermark_pdf(fp, text, str(out), opacity, font_size)
+                    results.append({"name": name, "ok": True, "output": str(out)})
+                except Exception as e:
+                    logger.exception("batch_watermark item failed: %s", fp)
+                    results.append({"name": name, "ok": False, "error": str(e) or type(e).__name__})
+        finally:
+            self._clear_progress()
+        return {"results": results, "save_dir": save_dir}
+
+    def batch_protect(self, file_paths: list, password: str, save_dir: str):
+        results = []
+        n = len(file_paths) or 1
+        try:
+            for i, fp in enumerate(file_paths):
+                name = Path(fp).name
+                self._set_progress((i / n) * 100, f"File {i+1} of {n}: {name}")
+                try:
+                    out = Path(save_dir) / (Path(fp).stem + "-protected.pdf")
+                    dup = 2
+                    while out.exists():
+                        out = Path(save_dir) / f"{Path(fp).stem}-protected-{dup}.pdf"
+                        dup += 1
+                    security.password_protect(fp, password, str(out))
+                    results.append({"name": name, "ok": True, "output": str(out)})
+                except Exception as e:
+                    logger.exception("batch_protect item failed: %s", fp)
+                    results.append({"name": name, "ok": False, "error": str(e) or type(e).__name__})
+        finally:
+            self._clear_progress()
+        return {"results": results, "save_dir": save_dir}
 
 
 def resource_path(relative: str) -> Path:
