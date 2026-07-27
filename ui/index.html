@@ -1345,52 +1345,52 @@
     }
 
     // ---- password ----
-    if(t.kind === ‘password’){
+    if(t.kind === 'password'){
       var pwFiles = [];
       function renderPwFiles(){
-        var slot = byId(‘pwFileSlot’);
+        var slot = byId('pwFileSlot');
         if(!pwFiles.length){
           slot.innerHTML = dropzoneHtml(t);
-          wireMultiFileDrop(byId(‘wfDrop’), t.accept, function(p){ pwFiles = pwFiles.concat(p); renderPwFiles(); });
-          byId(‘pwBox’).style.display = ‘none’; goBtn.disabled = true; return;
+          wireMultiFileDrop(byId('wfDrop'), t.accept, function(p){ pwFiles = pwFiles.concat(p); renderPwFiles(); });
+          byId('pwBox').style.display = 'none'; goBtn.disabled = true; return;
         }
         goBtn.disabled = false;
         var rows = pwFiles.map(function(f,i){
-          return ‘<div class="row"><span class="n">’+(i+1)+’</span><span class="nm">’+f.name+’</span><span class="fsize">’+fmtBytes(f.size)+’</span>’
-            +’<button data-rm="’+i+’">Remove</button></div>’;
-        }).join(‘’);
-        slot.innerHTML = ‘<div class="filelist">’+rows+’</div>’ + dropzoneHtml(t, ‘Add more PDFs’);
-        wireMultiFileDrop(byId(‘wfDrop’), t.accept, function(p){ pwFiles = pwFiles.concat(p); renderPwFiles(); });
-        slot.querySelectorAll(‘[data-rm]’).forEach(function(btn){
-          btn.addEventListener(‘click’, function(){ pwFiles.splice(parseInt(btn.getAttribute(‘data-rm’),10),1); renderPwFiles(); });
+          return '<div class="row"><span class="n">'+(i+1)+'</span><span class="nm">'+f.name+'</span><span class="fsize">'+fmtBytes(f.size)+'</span>'
+            +'<button data-rm="'+i+'">Remove</button></div>';
+        }).join('');
+        slot.innerHTML = '<div class="filelist">'+rows+'</div>' + dropzoneHtml(t, 'Add more PDFs');
+        wireMultiFileDrop(byId('wfDrop'), t.accept, function(p){ pwFiles = pwFiles.concat(p); renderPwFiles(); });
+        slot.querySelectorAll('[data-rm]').forEach(function(btn){
+          btn.addEventListener('click', function(){ pwFiles.splice(parseInt(btn.getAttribute('data-rm'),10),1); renderPwFiles(); });
         });
-        byId(‘pwBox’).style.display = ‘’;
+        byId('pwBox').style.display = '';
       }
 
-      body.innerHTML = ‘<div id="pwFileSlot"></div>’
-        + ‘<div class="panel-box" style="display:none" id="pwBox"><h4>Set password</h4>’
-        + ‘<div class="field"><label>Password</label><div class="pwrow"><input type="password" id="pwOne"><button class="pw-toggle" data-for="pwOne" type="button">Show</button></div></div>’
-        + ‘<div class="field"><label>Confirm</label><div class="pwrow"><input type="password" id="pwTwo"><button class="pw-toggle" data-for="pwTwo" type="button">Show</button></div></div>’
-        + ‘<div class="hint" id="pwHint">Anyone opening this PDF will need this password.</div></div>’;
-      body.querySelectorAll(‘.pw-toggle’).forEach(function(btn){
-        btn.addEventListener(‘click’, function(){
-          var inp = byId(btn.getAttribute(‘data-for’));
-          var showing = inp.type === ‘text’;
-          inp.type = showing ? ‘password’ : ‘text’;
-          btn.textContent = showing ? ‘Show’ : ‘Hide’;
+      body.innerHTML = '<div id="pwFileSlot"></div>'
+        + '<div class="panel-box" style="display:none" id="pwBox"><h4>Set password</h4>'
+        + '<div class="field"><label>Password</label><div class="pwrow"><input type="password" id="pwOne"><button class="pw-toggle" data-for="pwOne" type="button">Show</button></div></div>'
+        + '<div class="field"><label>Confirm</label><div class="pwrow"><input type="password" id="pwTwo"><button class="pw-toggle" data-for="pwTwo" type="button">Show</button></div></div>'
+        + '<div class="hint" id="pwHint">Anyone opening this PDF will need this password.</div></div>';
+      body.querySelectorAll('.pw-toggle').forEach(function(btn){
+        btn.addEventListener('click', function(){
+          var inp = byId(btn.getAttribute('data-for'));
+          var showing = inp.type === 'text';
+          inp.type = showing ? 'password' : 'text';
+          btn.textContent = showing ? 'Show' : 'Hide';
         });
       });
       renderPwFiles();
 
-      goBtn.addEventListener(‘click’, function(){
-        if(!pwFiles.length){ showError(‘Add at least one file.’); return; }
-        var p1 = byId(‘pwOne’).value, p2 = byId(‘pwTwo’).value;
-        var hint = byId(‘pwHint’);
-        if(!p1){ hint.textContent = ‘Enter a password.’; hint.style.color = ‘var(--warn)’; return; }
-        if(p1 !== p2){ hint.textContent = "Passwords don’t match."; hint.style.color = ‘var(--warn)’; return; }
-        hint.textContent = ‘Anyone opening this PDF will need this password.’; hint.style.color = ‘var(--ink-faint)’;
+      goBtn.addEventListener('click', function(){
+        if(!pwFiles.length){ showError('Add at least one file.'); return; }
+        var p1 = byId('pwOne').value, p2 = byId('pwTwo').value;
+        var hint = byId('pwHint');
+        if(!p1){ hint.textContent = 'Enter a password.'; hint.style.color = 'var(--warn)'; return; }
+        if(p1 !== p2){ hint.textContent = "Passwords don't match."; hint.style.color = 'var(--warn)'; return; }
+        hint.textContent = 'Anyone opening this PDF will need this password.'; hint.style.color = 'var(--ink-faint)';
         if(pwFiles.length === 1){
-          api().pick_save_path(baseName(pwFiles[0].name) + ‘-protected.pdf’).then(function(savePath){
+          api().pick_save_path(baseName(pwFiles[0].name) + '-protected.pdf').then(function(savePath){
             if(!savePath) return;
             runWithProgress(function(){
               return api().protect(pwFiles[0].path, p1, savePath).then(function(){ showSuccess(successBlock(savePath)); });
@@ -1402,8 +1402,8 @@
             runWithProgress(function(){
               return api().batch_protect(pwFiles.map(function(f){return f.path;}), p1, dir).then(function(res){
                 var oks = res.results.filter(function(r){ return r.ok; });
-                showSuccess(‘<div class="s1"><svg viewBox="0 0 20 20" fill="none"><path d="M4 10.5l4 4L16 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Done</div>’
-                  + ‘<div class="path">’+oks.length+’ of ‘+res.results.length+’ protected into ‘+res.save_dir+’</div>’);
+                showSuccess('<div class="s1"><svg viewBox="0 0 20 20" fill="none"><path d="M4 10.5l4 4L16 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Done</div>'
+                  + '<div class="path">'+oks.length+' of '+res.results.length+' protected into '+res.save_dir+'</div>');
               });
             });
           });
