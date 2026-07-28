@@ -744,7 +744,7 @@
         goBtn.disabled = files.length < 2;
         setGoLabel('Merge & Save As…');
         var hint = files.length
-          ? '<div class="hint" style="margin-bottom:10px">Files combine top to bottom. Drag or use the arrows to reorder. To arrange individual pages across files, open a file with <b>Arrange pages</b>.</div>'
+          ? '<div class="hint" style="margin-bottom:10px">Files combine top to bottom. Drag or use the arrows to reorder. To arrange individual pages across files, open a file with <b>Arrange pages</b>. When selecting multiple files at once, start the drag from the first file in your selection so they arrive in the right order.</div>'
           : '';
         var cards = files.map(function(f, i){
           return '<div class="fcard clickable" draggable="true" data-idx="'+i+'">'
