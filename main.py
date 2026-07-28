@@ -3,12 +3,6 @@
 Everything below runs locally: file dialogs are native OS dialogs, all PDF/
 Office processing happens with the libraries in core/, and nothing here ever
 opens a network socket. Built for Piyush J. Shah & Co., Chartered Accountant.
-
-Startup performance: only webview, stdlib, and core.paths are imported at
-module load time. Every heavy library (PyMuPDF, pdf2docx, pdfplumber,
-python-pptx, Pillow, pytesseract, etc.) is imported lazily on the first API
-call that needs it. This lets the window appear in roughly 1-2 seconds instead
-of waiting for all libraries to initialise before the UI is shown.
 """
 import base64
 import functools
@@ -24,17 +18,7 @@ import webview
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from core import paths   # lightweight, no heavy deps
-
-# Core modules are imported lazily via _mod() at runtime for fast startup.
-# The explicit imports below are NEVER executed (guarded by False) but are
-# required so PyInstaller's static analyser sees and bundles every module.
-# The build also passes --collect-submodules core as a belt-and-suspenders.
-if False:  # pragma: no cover
-    from core import (  # noqa: F401
-        convert_from_pdf, convert_to_pdf, legibility,
-        optimize, organize, ocr, preview, security,
-    )
+from core import convert_from_pdf, convert_to_pdf, legibility, optimize, organize, paths, preview, security
 
 # The packaged app runs with --windowed (no console), so without a log file
 # a failure like "nothing happens, no error shown" leaves zero trace to
@@ -56,16 +40,6 @@ def _log_uncaught(exc_type, exc_value, exc_tb):
 
 sys.excepthook = _log_uncaught
 
-
-# Lazy module cache: each core module is imported once on first use and
-# cached here. Access via _mod("optimize") etc.
-_modules: dict = {}
-
-def _mod(name: str):
-    if name not in _modules:
-        import importlib
-        _modules[name] = importlib.import_module(f"core.{name}")
-    return _modules[name]
 
 
 def _log_errors(fn):
@@ -139,10 +113,10 @@ class Api:
 
     # ---------- password-protected input files ----------
     def is_encrypted(self, file_path):
-        return _mod("security").is_encrypted(file_path)
+        return security.is_encrypted(file_path)
 
     def unlock(self, file_path, password):
-        decrypted = _mod("security").decrypt_to_temp(file_path, password)
+        decrypted = security.decrypt_to_temp(file_path, password)
         info = _file_info(decrypted)
         info["name"] = _file_info(file_path)["name"]
         return info
@@ -206,33 +180,33 @@ class Api:
 
     # ---------- organize ----------
     def merge(self, file_paths, save_path):
-        _mod("organize").merge_pdfs(file_paths, save_path)
+        organize.merge_pdfs(file_paths, save_path)
         return {"ok": True}
 
     def merge_pages(self, items, save_path):
-        _mod("organize").merge_pages(items, save_path)
+        organize.merge_pages(items, save_path)
         return {"ok": True}
 
     def split(self, file_path, save_dir, ranges=None, merge=False):
-        outputs = _mod("organize").split_pdf(file_path, save_dir, ranges, merge)
+        outputs = organize.split_pdf(file_path, save_dir, ranges, merge)
         return {"ok": True, "outputs": outputs}
 
     def rotate(self, file_path, save_path, rotations):
-        _mod("organize").rotate_pdf(file_path, save_path, rotations)
+        organize.rotate_pdf(file_path, save_path, rotations)
         return {"ok": True}
 
     def remove_pages(self, file_path, page_numbers, save_path):
-        _mod("organize").remove_pages(file_path, page_numbers, save_path)
+        organize.remove_pages(file_path, page_numbers, save_path)
         return {"ok": True}
 
     def page_count(self, file_path):
-        return _mod("preview").page_count(file_path)
+        return preview.page_count(file_path)
 
     # ---------- optimize ----------
     def compress(self, file_path, level, save_path):
         self._set_progress(0, "Compressing " + Path(file_path).name)
         try:
-            return _mod("optimize").compress_pdf(
+            return optimize.compress_pdf(
                 file_path, level, save_path,
                 progress=lambda f: self._set_progress(f * 100, "Compressing " + Path(file_path).name),
             )
@@ -242,7 +216,7 @@ class Api:
     def compress_custom(self, file_path, target_pct, save_path):
         self._set_progress(5, "Compressing " + Path(file_path).name + " (custom target)")
         try:
-            return _mod("optimize").compress_pdf_custom(file_path, target_pct, save_path)
+            return optimize.compress_pdf_custom(file_path, target_pct, save_path)
         finally:
             self._clear_progress()
 
@@ -251,7 +225,6 @@ class Api:
         If rel_paths is provided (list of paths relative to the source folder),
         the subfolder structure is mirrored inside save_dir so files from
         different subfolders never collide."""
-        optimize = _mod("optimize")
         prefix = (prefix or "").strip()[:4]
         results = []
         n = len(file_paths) or 1
@@ -290,18 +263,18 @@ class Api:
         return {"results": results, "save_dir": save_dir}
 
     def ocr_available(self):
-        return _mod("legibility").is_available()
+        return legibility.is_available()
 
     def watermark(self, file_path, text, save_path, opacity=0.25, font_size=48):
-        _mod("optimize").watermark_pdf(file_path, text, save_path, opacity, font_size)
+        optimize.watermark_pdf(file_path, text, save_path, opacity, font_size)
         return {"ok": True}
 
     # ---------- security ----------
     def scan_sensitive(self, file_path, pattern_keys):
-        return _mod("security").scan_sensitive(file_path, pattern_keys)
+        return security.scan_sensitive(file_path, pattern_keys)
 
     def render_page_preview(self, file_path, page_num, max_width=520):
-        return _mod("preview").render_page(file_path, page_num, max_width)
+        return preview.render_page(file_path, page_num, max_width)
 
     def image_thumbnail(self, file_path, max_width=240):
         import io
@@ -321,49 +294,49 @@ class Api:
         }
 
     def redact(self, file_path, boxes, save_path):
-        _mod("security").redact_pdf(file_path, boxes, save_path)
+        security.redact_pdf(file_path, boxes, save_path)
         return {"ok": True}
 
     def protect(self, file_path, password, save_path):
-        _mod("security").password_protect(file_path, password, save_path)
+        security.password_protect(file_path, password, save_path)
         return {"ok": True}
 
     # ---------- convert to PDF ----------
     def word_to_pdf(self, file_path, save_path):
-        _mod("convert_to_pdf").word_to_pdf(file_path, save_path)
+        convert_to_pdf.word_to_pdf(file_path, save_path)
         return {"ok": True}
 
     def excel_to_pdf(self, file_path, save_path):
-        _mod("convert_to_pdf").excel_to_pdf(file_path, save_path)
+        convert_to_pdf.excel_to_pdf(file_path, save_path)
         return {"ok": True}
 
     def ppt_to_pdf(self, file_path, save_path):
-        _mod("convert_to_pdf").ppt_to_pdf(file_path, save_path)
+        convert_to_pdf.ppt_to_pdf(file_path, save_path)
         return {"ok": True}
 
     def images_to_pdf(self, file_paths, save_path):
-        _mod("convert_to_pdf").images_to_pdf(file_paths, save_path)
+        convert_to_pdf.images_to_pdf(file_paths, save_path)
         return {"ok": True}
 
     # ---------- convert from PDF ----------
     def pdf_to_word(self, file_path, save_path):
-        _mod("convert_from_pdf").pdf_to_word(file_path, save_path)
+        convert_from_pdf.pdf_to_word(file_path, save_path)
         return {"ok": True}
 
     def pdf_to_excel(self, file_path, save_path):
-        return _mod("convert_from_pdf").pdf_to_excel(file_path, save_path)
+        return convert_from_pdf.pdf_to_excel(file_path, save_path)
 
     def pdf_to_ppt(self, file_path, save_path):
-        _mod("convert_from_pdf").pdf_to_ppt(file_path, save_path)
+        convert_from_pdf.pdf_to_ppt(file_path, save_path)
         return {"ok": True}
 
     def pdf_to_images(self, file_path, save_dir):
-        outputs = _mod("convert_from_pdf").pdf_to_images(file_path, save_dir)
+        outputs = convert_from_pdf.pdf_to_images(file_path, save_dir)
         return {"ok": True, "outputs": outputs}
 
     def batch_convert(self, file_paths: list, kind: str, save_dir: str):
-        cfp = _mod("convert_from_pdf")
-        ctp = _mod("convert_to_pdf")
+        cfp = convert_from_pdf
+        ctp = convert_to_pdf
         results = []
         n = len(file_paths) or 1
         ext_map = {
@@ -403,7 +376,6 @@ class Api:
         return {"results": results, "save_dir": save_dir}
 
     def batch_watermark(self, file_paths: list, text: str, save_dir: str, opacity: float = 0.25, font_size: int = 48):
-        optimize = _mod("optimize")
         results = []
         n = len(file_paths) or 1
         try:
@@ -426,7 +398,6 @@ class Api:
         return {"results": results, "save_dir": save_dir}
 
     def batch_protect(self, file_paths: list, password: str, save_dir: str):
-        security = _mod("security")
         results = []
         n = len(file_paths) or 1
         try:
