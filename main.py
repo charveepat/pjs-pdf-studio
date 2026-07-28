@@ -3,6 +3,12 @@
 Everything below runs locally: file dialogs are native OS dialogs, all PDF/
 Office processing happens with the libraries in core/, and nothing here ever
 opens a network socket. Built for Piyush J. Shah & Co., Chartered Accountant.
+
+Startup performance: only webview, stdlib, and core.paths are imported at
+module load time. Every heavy library (PyMuPDF, pdf2docx, pdfplumber,
+python-pptx, Pillow, pytesseract, etc.) is imported lazily on the first API
+call that needs it. This lets the window appear in roughly 1-2 seconds instead
+of waiting for all libraries to initialise before the UI is shown.
 """
 import base64
 import functools
@@ -18,7 +24,7 @@ import webview
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from core import convert_from_pdf, convert_to_pdf, legibility, optimize, organize, paths, preview, security
+from core import paths   # lightweight, no heavy deps
 
 # The packaged app runs with --windowed (no console), so without a log file
 # a failure like "nothing happens, no error shown" leaves zero trace to
@@ -41,11 +47,18 @@ def _log_uncaught(exc_type, exc_value, exc_tb):
 sys.excepthook = _log_uncaught
 
 
-def _log_errors(fn):
-    """Wraps an Api method so any exception is logged to disk and re-raised
-    as a plain RuntimeError, which pywebview reliably marshals back to the
-    UI's error box as a readable string."""
+# Lazy module cache: each core module is imported once on first use and
+# cached here. Access via _mod("optimize") etc.
+_modules: dict = {}
 
+def _mod(name: str):
+    if name not in _modules:
+        import importlib
+        _modules[name] = importlib.import_module(f"core.{name}")
+    return _modules[name]
+
+
+def _log_errors(fn):
     @functools.wraps(fn)
     def wrapper(self, *args, **kwargs):
         try:
@@ -53,7 +66,6 @@ def _log_errors(fn):
         except Exception as e:
             logger.exception("Api.%s failed (args=%r)", fn.__name__, args)
             raise RuntimeError(str(e) or f"{type(e).__name__} in {fn.__name__}") from None
-
     return wrapper
 
 
@@ -92,11 +104,7 @@ def _file_info(path: str) -> dict:
 @_log_all_methods
 class Api:
     def __init__(self):
-        self.window = None  # attached after window creation, needed for dialogs
-        # Live progress for long operations (compression). The UI polls
-        # get_progress() on a timer while a job runs; pywebview dispatches each
-        # call on its own thread, so the worker can update this dict while the
-        # poller reads it. A plain dict read/write under the GIL is enough here.
+        self.window = None
         self._progress = {"active": False, "pct": 0, "label": ""}
 
     def _set_progress(self, pct, label):
@@ -110,34 +118,26 @@ class Api:
 
     # ---------- drag-and-drop ----------
     def receive_dropped_file(self, name: str, data_b64: str):
-        """The browser side can't reliably read a real filesystem path off a
-        dropped file in every pywebview/OS combination, so drag-and-drop
-        ships the file's actual bytes over the same bridge every other call
-        uses instead of guessing at a path. Written to a per-drop temp file
-        so the rest of the app can treat it exactly like a dialog-picked file."""
         drop_dir = Path(tempfile.gettempdir()) / "pjs-pdf-studio-drops"
         drop_dir.mkdir(parents=True, exist_ok=True)
-        safe_name = Path(name).name  # strip any path component the browser sent
+        safe_name = Path(name).name
         dest = drop_dir / f"{uuid.uuid4().hex}_{safe_name}"
         dest.write_bytes(base64.b64decode(data_b64))
         info = _file_info(str(dest))
-        info["name"] = safe_name  # show the real filename, not the uuid-prefixed temp one
+        info["name"] = safe_name
         return info
 
     # ---------- password-protected input files ----------
     def is_encrypted(self, file_path):
-        return security.is_encrypted(file_path)
+        return _mod("security").is_encrypted(file_path)
 
     def unlock(self, file_path, password):
-        """Decrypt a locked PDF into a temp file and return it as a normal
-        file-info dict, so every downstream tool works on it without any
-        password handling of its own."""
-        decrypted = security.decrypt_to_temp(file_path, password)
+        decrypted = _mod("security").decrypt_to_temp(file_path, password)
         info = _file_info(decrypted)
-        info["name"] = _file_info(file_path)["name"]  # keep the user's real filename
+        info["name"] = _file_info(file_path)["name"]
         return info
 
-    # ---------- file / save dialogs (native OS dialogs, no fake modal) ----------
+    # ---------- file / save dialogs ----------
     def pick_open_file(self, accept: str = ""):
         result = self.window.create_file_dialog(webview.OPEN_DIALOG, file_types=_file_types(accept))
         return _file_info(result[0]) if result else None
@@ -149,7 +149,7 @@ class Api:
         return [_file_info(p) for p in result] if result else []
 
     def pick_save_path(self, suggested_name: str):
-        ext = Path(suggested_name).suffix  # e.g. ".xlsx"
+        ext = Path(suggested_name).suffix
         label = FILE_TYPE_LABELS.get(ext.lower(), "All files (*.*)")
         result = self.window.create_file_dialog(
             webview.SAVE_DIALOG,
@@ -160,9 +160,6 @@ class Api:
         if not result:
             return None
         path = result if isinstance(result, str) else result[0]
-        # The native save dialog can hand back a path with no extension (its
-        # "Save as type" was All Files), which then saves e.g. an .xlsx with no
-        # extension and won't open in Excel. Force the intended extension on.
         if ext and not path.lower().endswith(ext.lower()):
             path += ext
         return path
@@ -182,40 +179,39 @@ class Api:
         return result[0] if isinstance(result, (list, tuple)) else result
 
     def scan_folder_for_pdfs(self, folder_path: str):
-        """Return info dicts for every PDF found directly inside folder_path (non-recursive)."""
         folder = Path(folder_path)
         pdfs = sorted(folder.glob("*.pdf"), key=lambda p: p.name.lower())
         return [_file_info(str(p)) for p in pdfs]
 
     # ---------- organize ----------
     def merge(self, file_paths, save_path):
-        organize.merge_pdfs(file_paths, save_path)
+        _mod("organize").merge_pdfs(file_paths, save_path)
         return {"ok": True}
 
     def merge_pages(self, items, save_path):
-        organize.merge_pages(items, save_path)
+        _mod("organize").merge_pages(items, save_path)
         return {"ok": True}
 
     def split(self, file_path, save_dir, ranges=None, merge=False):
-        outputs = organize.split_pdf(file_path, save_dir, ranges, merge)
+        outputs = _mod("organize").split_pdf(file_path, save_dir, ranges, merge)
         return {"ok": True, "outputs": outputs}
 
     def rotate(self, file_path, save_path, rotations):
-        organize.rotate_pdf(file_path, save_path, rotations)
+        _mod("organize").rotate_pdf(file_path, save_path, rotations)
         return {"ok": True}
 
     def remove_pages(self, file_path, page_numbers, save_path):
-        organize.remove_pages(file_path, page_numbers, save_path)
+        _mod("organize").remove_pages(file_path, page_numbers, save_path)
         return {"ok": True}
 
     def page_count(self, file_path):
-        return preview.page_count(file_path)
+        return _mod("preview").page_count(file_path)
 
     # ---------- optimize ----------
     def compress(self, file_path, level, save_path):
         self._set_progress(0, "Compressing " + Path(file_path).name)
         try:
-            return optimize.compress_pdf(
+            return _mod("optimize").compress_pdf(
                 file_path, level, save_path,
                 progress=lambda f: self._set_progress(f * 100, "Compressing " + Path(file_path).name),
             )
@@ -223,21 +219,14 @@ class Api:
             self._clear_progress()
 
     def compress_custom(self, file_path, target_pct, save_path):
-        # The custom ladder runs several compression passes with OCR checks, so
-        # a true per-page percent isn't meaningful; show a moving indeterminate
-        # state instead of a stuck 0.
         self._set_progress(5, "Compressing " + Path(file_path).name + " (custom target)")
         try:
-            return optimize.compress_pdf_custom(file_path, target_pct, save_path)
+            return _mod("optimize").compress_pdf_custom(file_path, target_pct, save_path)
         finally:
             self._clear_progress()
 
     def compress_batch(self, file_paths, level, save_dir, target_pct=None, prefix=""):
-        """Compress several PDFs in one run, each written into save_dir as
-        <prefix>_<name>_compressed.pdf (prefix optional, capped at 4 chars).
-        One file failing (e.g. a corrupt PDF) doesn't abort the rest: its error
-        is captured and the batch continues, so a long run of statements never
-        loses the files that did compress."""
+        optimize = _mod("optimize")
         prefix = (prefix or "").strip()[:4]
         results = []
         n = len(file_paths) or 1
@@ -260,17 +249,11 @@ class Api:
                         res = optimize.compress_pdf_custom(fp, target_pct, str(out))
                     else:
                         res = optimize.compress_pdf(fp, level, str(out), progress=on_file_progress)
-                    results.append(
-                        {
-                            "name": name,
-                            "ok": True,
-                            "output": str(out),
-                            "before_bytes": res["before_bytes"],
-                            "after_bytes": res["after_bytes"],
-                            "achieved_pct": res.get("achieved_pct"),
-                            "reason": res.get("reason"),
-                        }
-                    )
+                    results.append({
+                        "name": name, "ok": True, "output": str(out),
+                        "before_bytes": res["before_bytes"], "after_bytes": res["after_bytes"],
+                        "achieved_pct": res.get("achieved_pct"), "reason": res.get("reason"),
+                    })
                 except Exception as e:
                     logger.exception("compress_batch item failed: %s", fp)
                     results.append({"name": name, "ok": False, "error": str(e) or type(e).__name__})
@@ -279,27 +262,22 @@ class Api:
         return {"results": results, "save_dir": save_dir}
 
     def ocr_available(self):
-        return legibility.is_available()
+        return _mod("legibility").is_available()
 
     def watermark(self, file_path, text, save_path, opacity=0.25, font_size=48):
-        optimize.watermark_pdf(file_path, text, save_path, opacity, font_size)
+        _mod("optimize").watermark_pdf(file_path, text, save_path, opacity, font_size)
         return {"ok": True}
 
     # ---------- security ----------
     def scan_sensitive(self, file_path, pattern_keys):
-        return security.scan_sensitive(file_path, pattern_keys)
+        return _mod("security").scan_sensitive(file_path, pattern_keys)
 
     def render_page_preview(self, file_path, page_num, max_width=520):
-        return preview.render_page(file_path, page_num, max_width)
+        return _mod("preview").render_page(file_path, page_num, max_width)
 
     def image_thumbnail(self, file_path, max_width=240):
-        """Small JPEG preview of an image file (for the Images to PDF grid),
-        as base64 so the UI can show it without a filesystem URL."""
-        import base64
         import io
-
         from PIL import Image
-
         img = Image.open(file_path)
         if img.mode not in ("RGB", "L"):
             img = img.convert("RGB")
@@ -315,50 +293,49 @@ class Api:
         }
 
     def redact(self, file_path, boxes, save_path):
-        security.redact_pdf(file_path, boxes, save_path)
+        _mod("security").redact_pdf(file_path, boxes, save_path)
         return {"ok": True}
 
     def protect(self, file_path, password, save_path):
-        security.password_protect(file_path, password, save_path)
+        _mod("security").password_protect(file_path, password, save_path)
         return {"ok": True}
 
     # ---------- convert to PDF ----------
     def word_to_pdf(self, file_path, save_path):
-        convert_to_pdf.word_to_pdf(file_path, save_path)
+        _mod("convert_to_pdf").word_to_pdf(file_path, save_path)
         return {"ok": True}
 
     def excel_to_pdf(self, file_path, save_path):
-        convert_to_pdf.excel_to_pdf(file_path, save_path)
+        _mod("convert_to_pdf").excel_to_pdf(file_path, save_path)
         return {"ok": True}
 
     def ppt_to_pdf(self, file_path, save_path):
-        convert_to_pdf.ppt_to_pdf(file_path, save_path)
+        _mod("convert_to_pdf").ppt_to_pdf(file_path, save_path)
         return {"ok": True}
 
     def images_to_pdf(self, file_paths, save_path):
-        convert_to_pdf.images_to_pdf(file_paths, save_path)
+        _mod("convert_to_pdf").images_to_pdf(file_paths, save_path)
         return {"ok": True}
 
     # ---------- convert from PDF ----------
     def pdf_to_word(self, file_path, save_path):
-        convert_from_pdf.pdf_to_word(file_path, save_path)
+        _mod("convert_from_pdf").pdf_to_word(file_path, save_path)
         return {"ok": True}
 
     def pdf_to_excel(self, file_path, save_path):
-        return convert_from_pdf.pdf_to_excel(file_path, save_path)
+        return _mod("convert_from_pdf").pdf_to_excel(file_path, save_path)
 
     def pdf_to_ppt(self, file_path, save_path):
-        convert_from_pdf.pdf_to_ppt(file_path, save_path)
+        _mod("convert_from_pdf").pdf_to_ppt(file_path, save_path)
         return {"ok": True}
 
     def pdf_to_images(self, file_path, save_dir):
-        outputs = convert_from_pdf.pdf_to_images(file_path, save_dir)
+        outputs = _mod("convert_from_pdf").pdf_to_images(file_path, save_dir)
         return {"ok": True, "outputs": outputs}
 
     def batch_convert(self, file_paths: list, kind: str, save_dir: str):
-        """Run a single-file conversion over multiple files, writing each
-        output to save_dir. kind is one of: word_to_pdf, excel_to_pdf,
-        ppt_to_pdf, pdf_to_word, pdf_to_ppt, pdf_to_excel, pdf_to_images."""
+        cfp = _mod("convert_from_pdf")
+        ctp = _mod("convert_to_pdf")
         results = []
         n = len(file_paths) or 1
         ext_map = {
@@ -378,23 +355,17 @@ class Api:
                         while out.exists():
                             out = Path(save_dir) / f"{Path(fp).stem}-{dup}{out_ext}"
                             dup += 1
-                        if kind == "word_to_pdf":
-                            convert_to_pdf.word_to_pdf(fp, str(out))
-                        elif kind == "excel_to_pdf":
-                            convert_to_pdf.excel_to_pdf(fp, str(out))
-                        elif kind == "ppt_to_pdf":
-                            convert_to_pdf.ppt_to_pdf(fp, str(out))
-                        elif kind == "pdf_to_word":
-                            convert_from_pdf.pdf_to_word(fp, str(out))
-                        elif kind == "pdf_to_ppt":
-                            convert_from_pdf.pdf_to_ppt(fp, str(out))
-                        elif kind == "pdf_to_excel":
-                            convert_from_pdf.pdf_to_excel(fp, str(out))
+                        if kind == "word_to_pdf":   ctp.word_to_pdf(fp, str(out))
+                        elif kind == "excel_to_pdf": ctp.excel_to_pdf(fp, str(out))
+                        elif kind == "ppt_to_pdf":   ctp.ppt_to_pdf(fp, str(out))
+                        elif kind == "pdf_to_word":  cfp.pdf_to_word(fp, str(out))
+                        elif kind == "pdf_to_ppt":   cfp.pdf_to_ppt(fp, str(out))
+                        elif kind == "pdf_to_excel": cfp.pdf_to_excel(fp, str(out))
                         results.append({"name": name, "ok": True, "output": str(out)})
                     else:
                         sub = Path(save_dir) / Path(fp).stem
                         sub.mkdir(parents=True, exist_ok=True)
-                        outs = convert_from_pdf.pdf_to_images(fp, str(sub))
+                        outs = cfp.pdf_to_images(fp, str(sub))
                         results.append({"name": name, "ok": True, "output": str(sub), "count": len(outs)})
                 except Exception as e:
                     logger.exception("batch_convert item failed: %s", fp)
@@ -404,6 +375,7 @@ class Api:
         return {"results": results, "save_dir": save_dir}
 
     def batch_watermark(self, file_paths: list, text: str, save_dir: str, opacity: float = 0.25, font_size: int = 48):
+        optimize = _mod("optimize")
         results = []
         n = len(file_paths) or 1
         try:
@@ -426,6 +398,7 @@ class Api:
         return {"results": results, "save_dir": save_dir}
 
     def batch_protect(self, file_paths: list, password: str, save_dir: str):
+        security = _mod("security")
         results = []
         n = len(file_paths) or 1
         try:
@@ -449,8 +422,6 @@ class Api:
 
 
 def resource_path(relative: str) -> Path:
-    """Files bundled via PyInstaller's --add-data extract to sys._MEIPASS at
-    runtime; when running from source, fall back to this file's directory."""
     base = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
     return base / relative
 
@@ -466,16 +437,11 @@ def main():
         min_size=(940, 660),
     )
     api.window = window
-    # Force Edge WebView2 backend (pre-installed on all Win10 1803+ / Win11
-    # machines). The default WinForms backend requires pythonnet/.NET and
-    # fails on machines where Python.Runtime.dll can't initialise.
+    # Force Edge WebView2 backend (pre-installed on all Win10 1803+ / Win11).
+    # The WinForms backend requires pythonnet/.NET and fails on some machines.
     webview.start(gui="edgechromium")
 
 
 if __name__ == "__main__":
-    # Required for multiprocessing (used to isolate a crash-prone PyMuPDF
-    # call in compress_pdf) to work correctly in a frozen PyInstaller exe on
-    # Windows, without this, spawning a child process can re-launch the
-    # whole app instead of running the worker function.
     multiprocessing.freeze_support()
     main()
