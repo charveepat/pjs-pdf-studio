@@ -36,7 +36,10 @@ import io
 import logging
 import math
 import multiprocessing
+import os
 import shutil
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -44,6 +47,103 @@ import fitz
 from PIL import Image
 
 logger = logging.getLogger("pjs")
+
+
+# ---------------------------------------------------------------------------
+# Ghostscript engine
+# ---------------------------------------------------------------------------
+
+def _gs_exe() -> str | None:
+    """Return path to gswin64c.exe — bundled copy first, then system PATH."""
+    if hasattr(sys, '_MEIPASS'):
+        p = Path(sys._MEIPASS) / 'ghostscript' / 'gswin64c.exe'
+        if p.exists():
+            return str(p)
+    for name in ('gswin64c', 'gswin64c.exe', 'gs'):
+        import shutil as _sh
+        found = _sh.which(name)
+        if found:
+            return found
+    return None
+
+
+def _gs_env() -> dict:
+    """Environment for the GS subprocess: point GS_LIB at our bundled lib/."""
+    env = os.environ.copy()
+    if hasattr(sys, '_MEIPASS'):
+        lib = Path(sys._MEIPASS) / 'ghostscript' / 'lib'
+        if lib.exists():
+            env['GS_LIB'] = str(lib)
+    return env
+
+
+# Maps our compression levels to Ghostscript preset names.
+# /printer  = 300 DPI — high quality, uses JBIG2 losslessly for B&W scans
+# /ebook    = 150 DPI — balanced, JBIG2 for B&W, JPEG for color
+# /screen   =  72 DPI — maximum compression
+_GS_SETTINGS = {
+    'low':         '/printer',
+    'recommended': '/ebook',
+    'extreme':     '/screen',
+}
+
+
+def compress_pdf_ghostscript(path: str, level: str, save_path: str, progress=None) -> dict | None:
+    """Compress with Ghostscript. Returns a result dict, or None if GS is not
+    available or fails — the caller falls back to the PyMuPDF engine in that case."""
+    gs = _gs_exe()
+    if not gs:
+        logger.info("Ghostscript not found — using PyMuPDF fallback")
+        return None
+
+    before = Path(path).stat().st_size
+    pdf_setting = _GS_SETTINGS.get(level, '/ebook')
+
+    if progress:
+        progress(0.05)
+
+    cmd = [
+        gs,
+        '-dBATCH', '-dNOPAUSE', '-dQUIET',
+        '-sDEVICE=pdfwrite',
+        '-dCompatibilityLevel=1.4',
+        f'-dPDFSETTINGS={pdf_setting}',
+        f'-sOutputFile={save_path}',
+        path,
+    ]
+
+    try:
+        proc = subprocess.run(cmd, capture_output=True, timeout=600, env=_gs_env())
+    except subprocess.TimeoutExpired:
+        logger.warning("Ghostscript timed out for %s", path)
+        return None
+    except Exception as e:
+        logger.warning("Ghostscript subprocess error: %s", e)
+        return None
+
+    if proc.returncode != 0:
+        logger.warning("Ghostscript rc=%d: %s", proc.returncode,
+                       proc.stderr.decode(errors='replace')[:500])
+        return None
+
+    if not Path(save_path).exists() or Path(save_path).stat().st_size == 0:
+        logger.warning("Ghostscript produced no output for %s", path)
+        return None
+
+    if progress:
+        progress(0.95)
+
+    after = Path(save_path).stat().st_size
+    if after >= before:
+        shutil.copyfile(path, save_path)
+        after = before
+
+    if progress:
+        progress(1.0)
+
+    logger.info("Ghostscript compressed %s: %d -> %d bytes (%.0f%%)",
+                Path(path).name, before, after, 100 * (1 - after / before))
+    return {'before_bytes': before, 'after_bytes': after, 'engine': 'ghostscript'}
 
 # RECOMPRESS: (jpeg quality, target DPI for however large the image is
 # actually drawn on the page). Only downsamples, an image already below
@@ -251,13 +351,21 @@ def _rasterize(doc: fitz.Document, cfg: dict, progress=None) -> fitz.Document:
 
 
 def compress_pdf(path: str, level: str, save_path: str, progress=None) -> dict:
-    """progress, if given, is called with a float 0..1 as the compression of
-    this one file advances, so the UI can show a real percentage instead of a
-    spinner."""
+    """Try Ghostscript first (better compression, JBIG2 for B&W scans), fall
+    back to the PyMuPDF engine if GS is unavailable or fails for this file."""
     def emit(frac):
         if progress:
             progress(max(0.0, min(1.0, frac)))
 
+    emit(0.0)
+
+    # --- Ghostscript path ---
+    gs_result = compress_pdf_ghostscript(path, level, save_path, progress=progress)
+    if gs_result:
+        return gs_result
+
+    # --- PyMuPDF fallback ---
+    logger.info("PyMuPDF fallback for %s", Path(path).name)
     emit(0.0)
     before = Path(path).stat().st_size
 
@@ -314,7 +422,7 @@ def compress_pdf(path: str, level: str, save_path: str, progress=None) -> dict:
         shutil.copyfile(path, save_path)
         after = before
 
-    return {"before_bytes": before, "after_bytes": after}
+    return {"before_bytes": before, "after_bytes": after, "engine": "pymupdf"}
 
 
 def _sample_page_numbers(n: int, count: int = 3) -> list[int]:

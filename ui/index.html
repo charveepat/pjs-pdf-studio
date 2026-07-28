@@ -1118,6 +1118,10 @@
         var pct = totalBefore ? Math.round(100 * (1 - totalAfter / totalBefore)) : 0;
         var head = '<div class="s1"><svg viewBox="0 0 20 20" fill="none"><path d="M4 10.5l4 4L16 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Saved</div>'
           + '<div class="path">'+oks.length+' of '+res.results.length+' compressed into '+res.save_dir+'</div>';
+        var gsCount = oks.filter(function(r){ return r.engine === 'ghostscript'; }).length;
+        var engineNote = gsCount === oks.length ? ' &middot; Ghostscript engine'
+                       : gsCount > 0 ? ' &middot; '+gsCount+' via Ghostscript, '+(oks.length-gsCount)+' via standard engine'
+                       : ' &middot; Standard engine';
         var lines = res.results.map(function(r){
           if(r.ok){
             var p = Math.round(100 * (1 - r.after_bytes / r.before_bytes));
@@ -1125,7 +1129,7 @@
           }
           return '<div style="color:#b3261e">'+r.name+' &middot; failed: '+r.error+'</div>';
         }).join('');
-        var totalLine = oks.length > 1 ? '<div style="margin-top:6px; font-weight:600">Total: '+fmtBytes(totalBefore)+' &rarr; '+fmtBytes(totalAfter)+' ('+pct+'% smaller)</div>' : '';
+        var totalLine = oks.length > 1 ? '<div style="margin-top:6px; font-weight:600">Total: '+fmtBytes(totalBefore)+' &rarr; '+fmtBytes(totalAfter)+' ('+pct+'% smaller'+engineNote+')</div>' : '';
         return head + '<div style="margin-top:8px; font-size:11.5px; color:var(--ink-soft); display:flex; flex-direction:column; gap:3px">'+lines+totalLine+'</div>';
       }
 
@@ -1147,7 +1151,8 @@
               }
               return api().compress(f0.path, level, savePath).then(function(res){
                 var pct = Math.round(100 * (1 - res.after_bytes / res.before_bytes));
-                showSuccess(successBlock(savePath, fmtBytes(res.before_bytes)+' &rarr; '+fmtBytes(res.after_bytes)+' ('+pct+'% smaller)'));
+                var eng = res.engine === 'ghostscript' ? ' &middot; Ghostscript engine' : ' &middot; Standard engine';
+                showSuccess(successBlock(savePath, fmtBytes(res.before_bytes)+' &rarr; '+fmtBytes(res.after_bytes)+' ('+pct+'% smaller'+eng+')'));
               });
             });
           });

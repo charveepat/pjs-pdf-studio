@@ -253,6 +253,7 @@ class Api:
                     results.append({
                         "name": name, "ok": True, "output": str(out),
                         "before_bytes": res["before_bytes"], "after_bytes": res["after_bytes"],
+                        "engine": res.get("engine", "pymupdf"),
                         "achieved_pct": res.get("achieved_pct"), "reason": res.get("reason"),
                     })
                 except Exception as e:

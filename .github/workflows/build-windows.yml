@@ -2,7 +2,7 @@ name: Build Windows exe
 
 on:
   push:
-    branches: [main]
+    branches: [main, ghostscript]
   workflow_dispatch: {}
 
 jobs:
@@ -31,10 +31,32 @@ jobs:
           Copy-Item "$src\tessdata\eng.traineddata" tessbundle\tessdata\ -Force
           Copy-Item "$src\tessdata\osd.traineddata" tessbundle\tessdata\ -Force
 
+      - name: Install Ghostscript (for high-quality PDF compression)
+        run: |
+          choco install ghostscript --no-progress -y
+          # Find the versioned install directory (e.g. gs10.04.0)
+          $gsRoot = Get-ChildItem "C:\Program Files\gs" | Sort-Object Name -Descending | Select-Object -First 1
+          $gsPath = $gsRoot.FullName
+          Write-Host "Ghostscript at: $gsPath"
+          # Bundle exe, core DLL, init scripts, and essential resources.
+          # We skip Resource\Font (PDFs already embed their fonts) to save ~10MB.
+          New-Item -ItemType Directory -Force -Path gsbundle\lib | Out-Null
+          New-Item -ItemType Directory -Force -Path gsbundle\Resource | Out-Null
+          Copy-Item "$gsPath\bin\gswin64c.exe" gsbundle\ -Force
+          Copy-Item "$gsPath\bin\gsdll64.dll"  gsbundle\ -Force
+          Copy-Item "$gsPath\lib\*"             gsbundle\lib\ -Force -Recurse
+          # Copy Resource subdirs except Font
+          Get-ChildItem "$gsPath\Resource" -Directory |
+            Where-Object { $_.Name -ne "Font" } |
+            ForEach-Object {
+              Copy-Item $_.FullName "gsbundle\Resource\$($_.Name)" -Recurse -Force
+            }
+
       - name: Build with PyInstaller
         run: |
           pyinstaller --onedir --windowed --name "PJS Pdf Studio" --add-data "ui;ui" `
             --add-data "tessbundle;tesseract" `
+            --add-data "gsbundle;ghostscript" `
             --collect-submodules core `
             --collect-all pdfminer `
             --hidden-import win32timezone `
