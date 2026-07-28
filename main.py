@@ -26,6 +26,12 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from core import paths   # lightweight, no heavy deps
 
+# PyInstaller's static analyser cannot see modules imported dynamically via
+# importlib inside _mod(). This dead block is never executed but it forces
+# the analyser to bundle every core module into the frozen exe.
+if False:
+    from core import convert_from_pdf, convert_to_pdf, legibility, optimize, organize, preview, security  # noqa: F401
+
 # The packaged app runs with --windowed (no console), so without a log file
 # a failure like "nothing happens, no error shown" leaves zero trace to
 # debug from. Every Api call's exceptions get written here.
