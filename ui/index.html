@@ -1169,9 +1169,8 @@
     // ---- compress folder (pick a folder, filter to PDFs, batch compress) ----
     if(t.kind === 'compress-folder'){
       var cfFolder = null;
-      var cfFiles = [];
+      var cfFiles = [];  // each has .path, .name, .size, .rel
       var cfLevel = 'recommended';
-      var cfSel = 'pdf'; // 'all' or 'pdf'
 
       body.innerHTML =
         '<div class="panel-box" id="cfFolderBox"><h4>Source Folder</h4>'
@@ -1179,12 +1178,9 @@
         + '<button class="btn btn-ghost" id="cfPickFolder" type="button">Select Folder&hellip;</button>'
         + '<span id="cfFolderName" style="font-size:12px;color:var(--ink-soft);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>'
         + '</div>'
-        + '<div style="margin-top:12px;display:flex;gap:10px;align-items:center;">'
-        + '<label style="font-size:12px;font-weight:600;color:var(--ink-soft);">Files to include:</label>'
-        + '<label class="checkrow" style="margin:0"><input type="radio" name="cfSel" value="pdf" checked> PDFs only</label>'
-        + '<label class="checkrow" style="margin:0"><input type="radio" name="cfSel" value="all"> All files (compress PDFs, copy others as-is)</label>'
-        + '</div></div>'
-        + '<div class="panel-box" style="display:none" id="cfFilesBox"><h4>PDFs found</h4><div id="cfFileList"></div></div>'
+        + '<div class="hint" style="margin-top:8px">Scans the folder and all subfolders. Only PDF files are compressed (Word, Excel, and other files are ignored). The subfolder structure is preserved in the output folder.</div>'
+        + '</div>'
+        + '<div class="panel-box" style="display:none" id="cfFilesBox"><div id="cfFileList"></div></div>'
         + '<div class="panel-box" style="display:none" id="cfOptionsBox"><h4>Compression level</h4>'
         + '<div class="segmented" id="cfSeg">'
         + '<div class="seg" data-lvl="low"><div class="t1">Low</div><div class="t2">Best quality</div></div>'
@@ -1196,24 +1192,31 @@
         + '<label>Target reduction %</label><input type="number" id="cfCustomPct" min="5" max="98" value="70" style="width:80px;">'
         + '<div class="hint">e.g. 70 = shrink to 30% of original size.</div></div>'
         + '<div class="field" style="margin-top:10px"><label>Output filename prefix <span style="font-weight:400;color:var(--ink-faint)">(optional, max 4 chars)</span></label>'
-        + '<div class="prefixrow"><input type="text" id="cfPrefix" maxlength="4" placeholder="e.g. Q1"><span class="hint">Files save as prefix_name_compressed.pdf.</span></div></div>'
+        + '<div class="prefixrow"><input type="text" id="cfPrefix" maxlength="4" placeholder="e.g. Q1"><span class="hint">Files save as prefix_name_compressed.pdf, subfolder structure preserved.</span></div></div>'
         + '</div>';
 
       function cfScanFolder(){
         if(!cfFolder) return;
+        byId('cfFileList').innerHTML = '<div class="hint">Scanning&hellip;</div>';
+        byId('cfFilesBox').style.display = '';
         api().scan_folder_for_pdfs(cfFolder).then(function(infos){
           cfFiles = infos;
-          var box = byId('cfFilesBox');
           var list = byId('cfFileList');
-          if(!cfFiles.length){ list.innerHTML = '<div class="hint">No PDFs found in this folder.</div>'; box.style.display = ''; byId('cfOptionsBox').style.display = 'none'; goBtn.disabled = true; return; }
-          list.innerHTML = cfFiles.map(function(f,i){
-            return '<div class="row" style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--line)">'
-              +'<span class="n" style="font-family:var(--font-mono);font-size:11px;color:var(--ink-faint);width:20px">'+(i+1)+'</span>'
-              +'<span style="flex:1;font-size:12.5px;font-weight:600">'+f.name+'</span>'
-              +'<span style="font-family:var(--font-mono);font-size:11px;color:var(--ink-soft)">'+fmtBytes(f.size)+'</span>'
-              +'</div>';
-          }).join('');
-          box.style.display = '';
+          if(!cfFiles.length){
+            list.innerHTML = '<div class="hint">No PDF files found in this folder or its subfolders.</div>';
+            byId('cfOptionsBox').style.display = 'none';
+            goBtn.disabled = true;
+            return;
+          }
+          var totalSize = cfFiles.reduce(function(s,f){ return s + f.size; }, 0);
+          list.innerHTML = '<h4 style="margin:0 0 10px">'+ cfFiles.length +' PDF'+(cfFiles.length===1?'':'s')+' found &mdash; '+fmtBytes(totalSize)+' total</h4>'
+            + cfFiles.map(function(f,i){
+              return '<div style="display:flex;align-items:center;gap:10px;padding:5px 0;border-bottom:1px solid var(--line)">'
+                +'<span style="font-family:var(--font-mono);font-size:11px;color:var(--ink-faint);width:24px;flex:none">'+(i+1)+'</span>'
+                +'<span style="flex:1;min-width:0;font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+f.rel+'">'+f.rel+'</span>'
+                +'<span style="font-family:var(--font-mono);font-size:11px;color:var(--ink-soft);flex:none">'+fmtBytes(f.size)+'</span>'
+                +'</div>';
+            }).join('');
           byId('cfOptionsBox').style.display = '';
           goBtn.disabled = false;
         });
@@ -1224,12 +1227,11 @@
           if(!folder) return;
           cfFolder = folder;
           byId('cfFolderName').textContent = folder;
+          byId('cfOptionsBox').style.display = 'none';
+          goBtn.disabled = true;
+          cfFiles = [];
           cfScanFolder();
         });
-      });
-
-      body.querySelectorAll('input[name="cfSel"]').forEach(function(radio){
-        radio.addEventListener('change', function(){ cfSel = radio.value; });
       });
 
       byId('cfSeg').querySelectorAll('.seg').forEach(function(seg){
@@ -1248,12 +1250,18 @@
           var prefix = (byId('cfPrefix').value || '').trim().slice(0,4);
           var targetPct = cfLevel === 'custom' ? parseInt(byId('cfCustomPct').value, 10) : null;
           runWithProgress(function(){
-            return api().compress_batch(cfFiles.map(function(f){return f.path;}), cfLevel, dir, targetPct, prefix).then(function(res){
+            return api().compress_batch(
+              cfFiles.map(function(f){ return f.path; }),
+              cfLevel, dir, targetPct, prefix,
+              cfFiles.map(function(f){ return f.rel; })
+            ).then(function(res){
               var oks = res.results.filter(function(r){ return r.ok; });
               var saved = oks.reduce(function(s,r){ return s + (r.before_bytes - r.after_bytes); }, 0);
+              var errs = res.results.filter(function(r){ return !r.ok; });
+              var errLine = errs.length ? '<div style="color:var(--warn);margin-top:4px">'+errs.length+' file(s) failed: '+errs.map(function(r){return r.name;}).join(', ')+'</div>' : '';
               showSuccess('<div class="s1"><svg viewBox="0 0 20 20" fill="none"><path d="M4 10.5l4 4L16 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Done</div>'
-                + '<div class="path">'+oks.length+' of '+res.results.length+' compressed. '
-                + 'Total saved: '+fmtBytes(saved)+'. Output: '+res.save_dir+'</div>');
+                + '<div class="path">'+oks.length+' of '+res.results.length+' PDFs compressed. Total saved: '+fmtBytes(saved)+'.</div>'
+                + '<div class="path">Output: '+res.save_dir+'</div>' + errLine);
             });
           });
         });

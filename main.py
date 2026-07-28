@@ -179,9 +179,20 @@ class Api:
         return result[0] if isinstance(result, (list, tuple)) else result
 
     def scan_folder_for_pdfs(self, folder_path: str):
+        """Return info dicts for every PDF in folder_path and all subfolders.
+        Case-insensitive on extension so .PDF / .Pdf / .pdf are all caught.
+        Each result includes a 'rel' key with the path relative to folder_path
+        so the UI can show subfolder context and the batch can mirror the
+        folder structure in the output directory."""
         folder = Path(folder_path)
-        pdfs = sorted(folder.glob("*.pdf"), key=lambda p: p.name.lower())
-        return [_file_info(str(p)) for p in pdfs]
+        pdfs = []
+        for p in folder.rglob("*"):
+            if p.is_file() and p.suffix.lower() == ".pdf":
+                info = _file_info(str(p))
+                info["rel"] = str(p.relative_to(folder))
+                pdfs.append(info)
+        pdfs.sort(key=lambda x: x["rel"].lower())
+        return pdfs
 
     # ---------- organize ----------
     def merge(self, file_paths, save_path):
@@ -225,7 +236,11 @@ class Api:
         finally:
             self._clear_progress()
 
-    def compress_batch(self, file_paths, level, save_dir, target_pct=None, prefix=""):
+    def compress_batch(self, file_paths, level, save_dir, target_pct=None, prefix="", rel_paths=None):
+        """Compress a list of PDFs into save_dir.
+        If rel_paths is provided (list of paths relative to the source folder),
+        the subfolder structure is mirrored inside save_dir so files from
+        different subfolders never collide."""
         optimize = _mod("optimize")
         prefix = (prefix or "").strip()[:4]
         results = []
@@ -233,11 +248,14 @@ class Api:
         try:
             for i, fp in enumerate(file_paths):
                 name = Path(fp).name
-                base = (f"{prefix}_" if prefix else "") + Path(fp).stem + "_compressed"
-                out = Path(save_dir) / f"{base}.pdf"
+                rel = Path(rel_paths[i]) if rel_paths and i < len(rel_paths) else Path(name)
+                base = (f"{prefix}_" if prefix else "") + rel.stem + "_compressed"
+                out_dir = Path(save_dir) / rel.parent
+                out_dir.mkdir(parents=True, exist_ok=True)
+                out = out_dir / f"{base}.pdf"
                 dup = 2
                 while out.exists():
-                    out = Path(save_dir) / f"{base}-{dup}.pdf"
+                    out = out_dir / f"{base}-{dup}.pdf"
                     dup += 1
 
                 def on_file_progress(frac, i=i, name=name):
