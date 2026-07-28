@@ -48,9 +48,13 @@ logger = logging.getLogger("pjs")
 # RECOMPRESS: (jpeg quality, target DPI for however large the image is
 # actually drawn on the page). Only downsamples, an image already below
 # the target DPI is left alone, never upscaled.
+# Recommended uses quality 60 (was 35): quality 35 is fine for document
+# text scans but looks terrible for photographic content (merged photo PDFs,
+# etc.) because you hit JPEG generation loss at very low quality. 60 is a
+# much safer floor for mixed content while still giving solid compression.
 LEVELS = {
     "low": {"quality": 75, "target_dpi": 160},
-    "recommended": {"quality": 35, "target_dpi": 95},
+    "recommended": {"quality": 60, "target_dpi": 130},
     "extreme": {"quality": 20, "target_dpi": 65},
 }
 
@@ -75,9 +79,9 @@ RASTER_EXTREME_FOR_TEXT_PDF = {"quality": 20, "dpi": 45}
 RECOMPRESS_LADDER = [
     {"quality": 90, "target_dpi": 220},
     {"quality": 75, "target_dpi": 160},  # = Low
-    {"quality": 55, "target_dpi": 125},
-    {"quality": 35, "target_dpi": 95},  # = Recommended
-    {"quality": 27, "target_dpi": 80},
+    {"quality": 60, "target_dpi": 130},  # = Recommended
+    {"quality": 40, "target_dpi": 100},
+    {"quality": 28, "target_dpi": 80},
     {"quality": 20, "target_dpi": 65},  # = Extreme
 ]
 RASTER_LADDER = [
@@ -375,57 +379,77 @@ def compress_pdf_custom(path: str, target_pct: float, save_path: str) -> dict:
     use_rasterize = image_ratio <= 0.5 and not has_text
     ladder = RASTER_LADDER if use_rasterize else RECOMPRESS_LADDER
 
+    # Subset fonts once upfront (not per-rung) — each call spawns a subprocess
+    # and can take tens of seconds; doing it 6 times made the custom path very
+    # slow and caused apparent hangs on the Windows exe.
+    subsetted_path = None
+    if not use_rasterize:
+        subsetted_path = _subset_fonts_isolated(path)
+
+    # Write candidates to a temp dir so we never hit permission issues when the
+    # save path is on a network drive, OneDrive, or other restricted location.
+    tmp_dir = Path(tempfile.mkdtemp(prefix="pjs_custom_"))
+
     best_path = None
     ocr_checked = False
     stopped_by_ocr = False
-    for rung, cfg in enumerate(ladder):
-        candidate_path = f"{save_path}.candidate{rung}"
-        if use_rasterize:
-            doc = fitz.open(path)
-            out = _rasterize(doc, cfg)
-            doc.close()
-            out.save(candidate_path, garbage=4, deflate=True, deflate_images=True, clean=True, use_objstms=True, compression_effort=100)
-            out.close()
-        else:
-            subsetted_path = _subset_fonts_isolated(path)
-            working_path = subsetted_path or path
-            doc = fitz.open(working_path)
-            _recompress_images(doc, cfg)
-            doc.save(
-                candidate_path,
-                garbage=4,
-                deflate=True,
-                deflate_images=True,
-                deflate_fonts=True,
-                clean=True,
-                use_objstms=True,
-                compression_effort=100,
-            )
-            doc.close()
-            if subsetted_path:
-                Path(subsetted_path).unlink(missing_ok=True)
+    try:
+        for rung, cfg in enumerate(ladder):
+            candidate_path = str(tmp_dir / f"candidate{rung}.pdf")
+            if use_rasterize:
+                doc = fitz.open(path)
+                out = _rasterize(doc, cfg)
+                doc.close()
+                out.save(candidate_path, garbage=4, deflate=True, deflate_images=True, clean=True, use_objstms=True, compression_effort=100)
+                out.close()
+            else:
+                working_path = subsetted_path or path
+                doc = fitz.open(working_path)
+                _recompress_images(doc, cfg)
+                doc.save(
+                    candidate_path,
+                    garbage=4,
+                    deflate=True,
+                    deflate_images=True,
+                    deflate_fonts=True,
+                    clean=True,
+                    use_objstms=True,
+                    compression_effort=100,
+                )
+                doc.close()
 
-        legible = _is_legible(path, candidate_path, has_text, sample_pages)
-        if legible is not None:
-            ocr_checked = True
+            legible = _is_legible(path, candidate_path, has_text, sample_pages)
+            if legible is not None:
+                ocr_checked = True
 
-        if legible is False:
-            Path(candidate_path).unlink(missing_ok=True)
-            stopped_by_ocr = True
-            break
+            if legible is False:
+                Path(candidate_path).unlink(missing_ok=True)
+                stopped_by_ocr = True
+                break
 
+            if best_path and best_path != candidate_path:
+                Path(best_path).unlink(missing_ok=True)
+            best_path = candidate_path
+
+            achieved = 100 * (1 - Path(candidate_path).stat().st_size / before) if before else 0
+            if achieved >= target_pct:
+                break
+    finally:
+        if subsetted_path:
+            Path(subsetted_path).unlink(missing_ok=True)
+
+    try:
         if best_path:
-            Path(best_path).unlink(missing_ok=True)
-        best_path = candidate_path
-
-        achieved = 100 * (1 - Path(candidate_path).stat().st_size / before) if before else 0
-        if achieved >= target_pct:
-            break
-
-    if best_path:
-        shutil.move(best_path, save_path)
-    else:
-        shutil.copyfile(path, save_path)
+            shutil.move(best_path, save_path)
+        else:
+            shutil.copyfile(path, save_path)
+    finally:
+        # Clean up any leftover candidates and the temp dir
+        try:
+            import shutil as _shutil
+            _shutil.rmtree(tmp_dir, ignore_errors=True)
+        except Exception:
+            pass
 
     after = Path(save_path).stat().st_size
     if after >= before:
@@ -435,11 +459,11 @@ def compress_pdf_custom(path: str, target_pct: float, save_path: str) -> dict:
     achieved_pct = 100 * (1 - after / before) if before else 0
     capped = achieved_pct < target_pct - 0.5
     if not ocr_checked:
-        reason = "Legibility could not be verified on this machine (Windows' built-in OCR wasn't available), so this is a best-effort result without per-file confirmation."
+        reason = "Legibility could not be verified on this machine (Windows built-in OCR was not available), so this is a best-effort result without per-file verification."
     elif stopped_by_ocr:
-        reason = f"Stopped at {achieved_pct:.0f}% because compressing further started producing text OCR could no longer read reliably."
+        reason = f"Stopped at {achieved_pct:.0f}% because going further would reduce OCR accuracy below the legibility threshold."
     elif capped:
-        reason = f"Stopped at {achieved_pct:.0f}%, the most this tool will compress a file like this even at Extreme, to stay a safe margin above the point where text becomes hard to read."
+        reason = f"Stopped at {achieved_pct:.0f}%, the maximum this tool compresses even at Extreme tier."
     else:
         reason = None
 

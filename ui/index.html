@@ -1139,7 +1139,8 @@
             runWithProgress(function(){
               if(level === 'custom'){
                 return api().compress_custom(f0.path, targetPct, savePath).then(function(res){
-                  var achieved = Math.round(res.achieved_pct);
+                  if(!res){ showError('Compression completed but no result was returned.'); return; }
+                  var achieved = Math.round(res.achieved_pct || 0);
                   var detail = fmtBytes(res.before_bytes)+' &rarr; '+fmtBytes(res.after_bytes)+' ('+achieved+'% smaller, requested '+targetPct+'%)';
                   showSuccess(successBlock(savePath, detail) + (res.reason ? reasonHtml(res.reason) : ''));
                 });
