@@ -1250,19 +1250,33 @@
           if(!dir) return;
           var prefix = (byId('cfPrefix').value || '').trim().slice(0,4);
           var targetPct = cfLevel === 'custom' ? parseInt(byId('cfCustomPct').value, 10) : null;
-          runWithProgress(function(){
-            return api().compress_batch(
-              cfFiles.map(function(f){ return f.path; }),
-              cfLevel, dir, targetPct, prefix,
-              cfFiles.map(function(f){ return f.rel; })
-            ).then(function(res){
-              var oks = res.results.filter(function(r){ return r.ok; });
-              var saved = oks.reduce(function(s,r){ return s + (r.before_bytes - r.after_bytes); }, 0);
-              var errs = res.results.filter(function(r){ return !r.ok; });
-              var errLine = errs.length ? '<div style="color:var(--warn);margin-top:4px">'+errs.length+' file(s) failed: '+errs.map(function(r){return r.name;}).join(', ')+'</div>' : '';
-              showSuccess('<div class="s1"><svg viewBox="0 0 20 20" fill="none"><path d="M4 10.5l4 4L16 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Done</div>'
-                + '<div class="path">'+oks.length+' of '+res.results.length+' PDFs compressed. Total saved: '+fmtBytes(saved)+'.</div>'
-                + '<div class="path">Output: '+res.save_dir+'</div>' + errLine);
+          // Unlock any password-protected PDFs before compressing.
+          // Files come from the backend folder scan so they never went through
+          // wireMultiFileDrop; we handle them here instead. Each file's .rel
+          // is preserved so the output folder structure stays intact.
+          var resolved = [];
+          cfFiles.reduce(function(chain, f){
+            return chain.then(function(){
+              return unlockIfNeeded(f).then(function(u){
+                if(u){ u.rel = f.rel; resolved.push(u); }
+              });
+            });
+          }, Promise.resolve()).then(function(){
+            if(!resolved.length){ showError('No files to compress (all cancelled or failed to unlock).'); return; }
+            runWithProgress(function(){
+              return api().compress_batch(
+                resolved.map(function(f){ return f.path; }),
+                cfLevel, dir, targetPct, prefix,
+                resolved.map(function(f){ return f.rel; })
+              ).then(function(res){
+                var oks = res.results.filter(function(r){ return r.ok; });
+                var saved = oks.reduce(function(s,r){ return s + (r.before_bytes - r.after_bytes); }, 0);
+                var errs = res.results.filter(function(r){ return !r.ok; });
+                var errLine = errs.length ? '<div style="color:var(--warn);margin-top:4px">'+errs.length+' file(s) failed: '+errs.map(function(r){return r.name;}).join(', ')+'</div>' : '';
+                showSuccess('<div class="s1"><svg viewBox="0 0 20 20" fill="none"><path d="M4 10.5l4 4L16 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Done</div>'
+                  + '<div class="path">'+oks.length+' of '+res.results.length+' PDFs compressed. Total saved: '+fmtBytes(saved)+'.</div>'
+                  + '<div class="path">Output: '+res.save_dir+'</div>' + errLine);
+              });
             });
           });
         });
