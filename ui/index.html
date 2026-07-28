@@ -400,7 +400,8 @@
     pdf2w: docIcon('var(--pdf-color)'),
     pdf2x: docIcon('var(--pdf-color)'),
     pdf2p: docIcon('var(--pdf-color)'),
-    pdf2img: docIcon('var(--pdf-color)')
+    pdf2img: docIcon('var(--pdf-color)'),
+    fillable: actionIcon('<rect x="4" y="2.5" width="12" height="15" rx="1.6" stroke="var(--pdf-color)" stroke-width="1.3" fill="var(--pdf-tint)"/><rect x="5.5" y="6.5" width="9" height="2" rx="0.5" fill="none" stroke="var(--pdf-color)" stroke-width="0.9"/><rect x="5.5" y="10" width="9" height="2" rx="0.5" fill="none" stroke="var(--pdf-color)" stroke-width="0.9"/><path d="M5.5 14.5h5" stroke="var(--pdf-color)" stroke-width="0.9" stroke-linecap="round"/><circle cx="15.5" cy="14.5" r="2.5" fill="var(--pdf-color)"/><path d="M14.6 14.5h1.8M15.5 13.6v1.8" stroke="var(--panel)" stroke-width="0.9" stroke-linecap="round"/>')
   };
   var BADGE = {
     pdf:{text:'PDF', color:'var(--pdf-color)', tint:'var(--pdf-tint)'},
@@ -431,7 +432,8 @@
     {id:'watermark', cat:'optimize', catLabel:'Optimize', title:'Add Watermark', desc:'Stamp text diagonally across every page, one file or many.', icon:ICONS.watermark, tint:'var(--pdf-tint)', kind:'watermark', accept:'.pdf', out:'pdf'},
 
     {id:'redact', cat:'security', catLabel:'Security', title:'Redact PDF', desc:'Black out sensitive text, by hand or auto-detected.', icon:ICONS.redact, tint:'var(--pdf-tint)', kind:'redact', accept:'.pdf', out:'pdf'},
-    {id:'password', cat:'security', catLabel:'Security', title:'Password Protect', desc:'Require a password before the PDF can be opened. Handles one file or a batch.', icon:ICONS.password, tint:'var(--pdf-tint)', kind:'password', accept:'.pdf', out:'pdf'}
+    {id:'password', cat:'security', catLabel:'Security', title:'Password Protect', desc:'Require a password before the PDF can be opened. Handles one file or a batch.', icon:ICONS.password, tint:'var(--pdf-tint)', kind:'password', accept:'.pdf', out:'pdf'},
+    {id:'make-fillable', cat:'organize', catLabel:'Organize', title:'Make Fillable PDF', desc:'Convert a static PDF into a fillable form with clickable text fields. Open the result in any PDF viewer to fill and save.', icon:ICONS.fillable, tint:'var(--pdf-tint)', kind:'make-fillable', accept:'.pdf', out:'pdf'}
   ];
 
   var CATS = [
@@ -1557,6 +1559,46 @@
           if(!savePath) return;
           runWithProgress(function(){
             return api().redact(file.path, boxes, savePath).then(function(){ showSuccess(successBlock(savePath, boxes.length + ' areas redacted')); });
+          });
+        });
+      });
+      return;
+    }
+
+    // ---- make-fillable ----
+    if(t.kind === 'make-fillable'){
+      var mfFile = null;
+      function renderMf(){
+        if(!mfFile){
+          body.innerHTML = dropzoneHtml(t);
+          wireMultiFileDrop(byId('wfDrop'), t.accept, function(p){
+            if(p.length){ mfFile = p[0]; renderMf(); }
+          });
+          goBtn.disabled = true; return;
+        }
+        goBtn.disabled = false;
+        body.innerHTML = '<div class="filelist"><div class="row"><span class="n">1</span>'
+          +'<span class="nm">'+mfFile.name+'</span><span class="fsize">'+fmtBytes(mfFile.size)+'</span>'
+          +'<button id="mfRm">Remove</button></div></div>'
+          +'<div class="hint" style="margin-top:8px">Blank lines, underlines, and empty boxes in the PDF will become clickable text fields. Open the saved PDF in Adobe Reader, Edge, or Chrome to fill and save.</div>';
+        byId('mfRm').addEventListener('click', function(){ mfFile = null; renderMf(); });
+      }
+      renderMf();
+      goBtn.addEventListener('click', function(){
+        if(!mfFile){ showError('Choose a file first.'); return; }
+        unlockIfNeeded(mfFile).then(function(f){
+          if(!f) return;
+          api().pick_save_path(baseName(f.name) + '-fillable.pdf').then(function(savePath){
+            if(!savePath) return;
+            runWithProgress(function(){
+              return api().make_fillable(f.path, savePath).then(function(res){
+                if(!res || !res.ok){ showError('Could not create fillable PDF.'); return; }
+                var note = res.fields > 0
+                  ? res.fields + ' field' + (res.fields !== 1 ? 's' : '') + ' detected'
+                  : 'No fields detected - the PDF may not have visible blank lines or boxes';
+                showSuccess(successBlock(savePath) + '<div class="hint" style="margin-top:6px">'+note+'</div>');
+              });
+            });
           });
         });
       });

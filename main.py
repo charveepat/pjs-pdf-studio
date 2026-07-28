@@ -18,7 +18,7 @@ import webview
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from core import convert_from_pdf, convert_to_pdf, legibility, optimize, organize, paths, preview, security
+from core import convert_from_pdf, convert_to_pdf, forms, legibility, optimize, organize, paths, preview, security
 
 # The packaged app runs with --windowed (no console), so without a log file
 # a failure like "nothing happens, no error shown" leaves zero trace to
@@ -418,6 +418,10 @@ class Api:
         finally:
             self._clear_progress()
         return {"results": results, "save_dir": save_dir}
+
+    # ---------- forms ----------
+    def make_fillable(self, file_path, save_path):
+        return forms.pdf_to_fillable(file_path, save_path)
 
 
 def resource_path(relative: str) -> Path:
