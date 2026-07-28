@@ -26,11 +26,15 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from core import paths   # lightweight, no heavy deps
 
-# PyInstaller's static analyser cannot see modules imported dynamically via
-# importlib inside _mod(). This dead block is never executed but it forces
-# the analyser to bundle every core module into the frozen exe.
-if False:
-    from core import convert_from_pdf, convert_to_pdf, legibility, optimize, organize, preview, security  # noqa: F401
+# Core modules are imported lazily via _mod() at runtime for fast startup.
+# The explicit imports below are NEVER executed (guarded by False) but are
+# required so PyInstaller's static analyser sees and bundles every module.
+# The build also passes --collect-submodules core as a belt-and-suspenders.
+if False:  # pragma: no cover
+    from core import (  # noqa: F401
+        convert_from_pdf, convert_to_pdf, legibility,
+        optimize, organize, ocr, preview, security,
+    )
 
 # The packaged app runs with --windowed (no console), so without a log file
 # a failure like "nothing happens, no error shown" leaves zero trace to

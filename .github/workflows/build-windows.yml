@@ -35,6 +35,7 @@ jobs:
         run: |
           pyinstaller --onedir --windowed --name "PJS Pdf Studio" --add-data "ui;ui" `
             --add-data "tessbundle;tesseract" `
+            --collect-submodules core `
             --collect-all pdfminer `
             --hidden-import win32timezone `
             --collect-all winocr `
