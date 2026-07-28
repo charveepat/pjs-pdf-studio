@@ -22,7 +22,8 @@ def ocr_words(pil_img) -> set[str]:
     import winocr
 
     result = winocr.recognize_pil_sync(pil_img)
-    return {w.lower() for w in result.text.split() if w.strip()}
+    text = result["text"] if isinstance(result, dict) else result.text
+    return {w.lower() for w in text.split() if w.strip()}
 
 
 def word_accuracy(reference_words: set[str], candidate_words: set[str]) -> float:
